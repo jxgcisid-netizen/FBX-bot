@@ -182,6 +182,8 @@ async def create_goodbye_card(member, member_count):
 
 
 async def create_rank_card(member, level, xp, needed_xp, rank):
+    import os
+
     # 1. 加载底图
     bg_path = os.path.join(os.path.dirname(__file__), "ezeznoob.png")
     try:
@@ -192,26 +194,11 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
 
     draw = ImageDraw.Draw(img)
 
-    # 2. 装饰粒子（随机闪烁的小星星/圆点）
-    random.seed(member.id if hasattr(member, 'id') else 42)
-    for _ in range(25):
-        px = random.randint(30, 870)
-        py = random.randint(10, 210)
-        size = random.randint(1, 4)
-        brightness = random.randint(80, 200)
-        # 随机青色或粉色
-        color = (0, 238, 255, brightness) if random.random() > 0.3 else (255, 30, 150, brightness)
-        draw.ellipse([px - size, py - size, px + size, py + size], fill=color)
-
-    # 3. 扫描线纹理（水平细线）
-    for y in range(0, 220, 4):
-        draw.line([(0, y), (900, y)], fill=(255, 255, 255, 6), width=1)
-
-    # 4. 字体
+    # 2. 字体
     font_name = get_font(42, True)
     font_info = get_font(24, True)
 
-    # 5. 写入文字
+    # 3. 写入文字
     text_x = 220
     nickname = member.display_name[:16] + "..." if len(member.display_name) > 16 else member.display_name
 
@@ -220,7 +207,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
     draw.text((text_x + 360, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    # 6. 渐变进度条 + 玻璃高光
+    # 4. 渐变进度条（先把渐变图转成 RGBA 再贴）
     bar_x, bar_y = 40, 175
     bar_max_w = 660
     bar_h = 22
@@ -238,11 +225,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
             mask_draw.rounded_rectangle([0, 0, progress, bar_h], radius=r, fill=255)
             img.paste(grad_img, (bar_x, bar_y), mask)
 
-            highlight_h = bar_h // 2
-            highlight = Image.new("RGBA", (progress, highlight_h), (255, 255, 255, 40))
-            img.paste(highlight, (bar_x, bar_y), mask)
-
-    # 7. 头像 + 正圆形赛博描边
+    # 5. 头像 + 正圆形赛博描边
     av_img = await fetch_avatar(member)
     if av_img:
         av_size = 133
@@ -251,12 +234,11 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
         img.paste(circle, (av_x, av_y), circle)
         draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
 
-    # 8. 输出
+    # 6. 输出
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
-
 
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
