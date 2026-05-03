@@ -7,6 +7,17 @@ from main import TEAL, TEAL_DIM, RED, RED_DIM, GOLD, SILVER, BRONZE, RANK_COLORS
 from utils import fetch_avatar, make_circle_avatar
 
 
+def create_gradient(width, height, color_left, color_right):
+    """生成水平渐变图片"""
+    base = Image.new('RGB', (width, 1))
+    for x in range(width):
+        r = int(color_left[0] + (color_right[0] - color_left[0]) * x / width)
+        g = int(color_left[1] + (color_right[1] - color_left[1]) * x / width)
+        b = int(color_left[2] + (color_right[2] - color_left[2]) * x / width)
+        base.putpixel((x, 0), (r, g, b))
+    return base.resize((width, height))
+
+
 async def create_welcome_card(member, member_count):
     w, h = 800, 440
     img = Image.new("RGBA", (w, h), (30, 33, 40))
@@ -172,10 +183,8 @@ async def create_goodbye_card(member, member_count):
 
 
 async def create_rank_card(member, level, xp, needed_xp, rank):
-    import os
-
     # 1. 加载底图
-    bg_path = os.path.join(os.path.dirname(__file__), "ezeznoob.png")
+    bg_path = os.path.join(os.path.dirname(__file__), "Gemini_Generated_Image_t7n65kt7n65kt7n6.png")
     try:
         img = Image.open(bg_path).convert("RGBA")
         img = img.resize((900, 220))
@@ -188,16 +197,16 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     font_name = get_font(42, True)
     font_info = get_font(24, True)
 
-    # 3. 写入文字
+    # 3. 写入文字（Rank 位置左移避开右侧边框）
     text_x = 220
     nickname = member.display_name[:16] + "..." if len(member.display_name) > 16 else member.display_name
 
     draw.text((text_x, 35), f"@{nickname}", fill=(255, 255, 255), font=font_name)
     draw.text((text_x, 120), f"Level: {level}", fill=(255, 30, 150), font=font_info)
     draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
-    draw.text((text_x + 420, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
+    draw.text((text_x + 360, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    # 4. 进度条（底槽 + 进度）
+    # 4. 渐变进度条
     bar_x, bar_y = 40, 175
     bar_max_w = 660
     bar_h = 22
@@ -210,22 +219,22 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
         fill=(20, 25, 45, 230)
     )
 
-    # 进度
+    # 进度（粉→青渐变）
     if needed_xp > 0:
         progress = int((xp / needed_xp) * bar_max_w)
         if progress > 0:
             progress = max(progress, r * 2)
-            draw.rounded_rectangle(
-                [bar_x, bar_y, bar_x + progress, bar_y + bar_h],
-                radius=r,
-                fill=(0, 238, 255)
-            )
+            grad_img = create_gradient(progress, bar_h, (255, 30, 150), (0, 238, 255))
+            mask = Image.new("L", (progress, bar_h), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.rounded_rectangle([0, 0, progress, bar_h], radius=r, fill=255)
+            img.paste(grad_img, (bar_x, bar_y), mask)
 
-    # 5. 头像
+    # 5. 头像（缩小并居中在发光环内）
     av_img = await fetch_avatar(member)
     if av_img:
-        av_size = 140
-        av_x, av_y = 35, 40
+        av_size = 110
+        av_x, av_y = 42, 42
         circle = make_circle_avatar(av_img, av_size)
         img.paste(circle, (av_x, av_y), circle)
 
@@ -234,6 +243,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
+
 
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
