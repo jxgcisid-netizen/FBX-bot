@@ -170,12 +170,36 @@ async def create_goodbye_card(member, member_count):
 
 
 async def create_rank_card(member, level, xp, needed_xp, rank):
-    # 1. 加载底图
+    import os
+    import logging
+    logger = logging.getLogger("DiscordBot")
+
+    # 诊断：列出 /app 目录下的所有文件
+    app_dir = "/app"
+    if os.path.exists(app_dir):
+        files = os.listdir(app_dir)
+        logger.info(f"诊断: /app 目录文件列表: {files}")
+        for f in files:
+            if f.endswith('.png'):
+                logger.info(f"诊断: 找到PNG文件: {f}")
+    else:
+        logger.error(f"诊断: /app 目录不存在")
+
+    # 诊断：检查图片文件是否真的存在
     bg_path = os.path.join(os.path.dirname(__file__), "Gemini_Generated_Image_t7n65kt7n65kt7n6.png")
+    logger.info(f"诊断: 期望的底图路径: {bg_path}")
+    logger.info(f"诊断: 文件是否存在: {os.path.exists(bg_path)}")
+
+    # 1. 加载底图
     try:
         img = Image.open(bg_path).convert("RGBA")
+        logger.info("诊断: 底图加载成功")
     except FileNotFoundError:
-        # 底图不存在时，回退到纯色背景
+        logger.error(f"诊断: 底图文件未找到于 {bg_path}")
+        # 回退到纯色背景
+        img = Image.new("RGBA", (900, 220), (15, 12, 40, 255))
+    except Exception as e:
+        logger.error(f"诊断: 加载底图时发生其他错误: {e}")
         img = Image.new("RGBA", (900, 220), (15, 12, 40, 255))
 
     draw = ImageDraw.Draw(img)
@@ -223,7 +247,6 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
-
 
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
