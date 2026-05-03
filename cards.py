@@ -182,8 +182,6 @@ async def create_goodbye_card(member, member_count):
 
 
 async def create_rank_card(member, level, xp, needed_xp, rank):
-    import os
-
     # 1. 加载底图
     bg_path = os.path.join(os.path.dirname(__file__), "ezeznoob.png")
     try:
@@ -198,16 +196,27 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     font_name = get_font(42, True)
     font_info = get_font(24, True)
 
-    # 3. 写入文字
+    # 3. 文字霓虹发光特效
+    def draw_glowing_text(base_img, xy, text, font, main_color, glow_color, radius=3):
+        glow_layer = Image.new("RGBA", base_img.size, (0, 0, 0, 0))
+        glow_draw = ImageDraw.Draw(glow_layer)
+        glow_draw.text(xy, text, fill=glow_color, font=font)
+        glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(radius=radius))
+        base_img.alpha_composite(glow_layer)
+        draw_main = ImageDraw.Draw(base_img)
+        draw_main.text(xy, text, fill=main_color, font=font)
+
     text_x = 220
     nickname = member.display_name[:16] + "..." if len(member.display_name) > 16 else member.display_name
 
-    draw.text((text_x, 35), f"@{nickname}", fill=(255, 255, 255), font=font_name)
-    draw.text((text_x, 120), f"Level: {level}", fill=(255, 30, 150), font=font_info)
-    draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
-    draw.text((text_x + 360, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
+    draw_glowing_text(img, (text_x, 35), f"@{nickname}", font_name, (255, 255, 255, 255), (0, 238, 255, 180), radius=4)
+    draw_glowing_text(img, (text_x, 120), f"Level: {level}", font_info, (255, 30, 150, 255), (255, 30, 150, 120), radius=2)
+    draw_glowing_text(img, (text_x + 150, 120), f"XP: {xp} / {needed_xp}", font_info, (0, 238, 255, 255), (0, 238, 255, 120), radius=2)
+    draw_glowing_text(img, (text_x + 360, 120), f"Rank: {rank}", font_info, (255, 30, 150, 255), (255, 30, 150, 120), radius=2)
 
-    # 4. 进度条
+    draw = ImageDraw.Draw(img)
+
+    # 4. 渐变进度条 + 玻璃高光
     bar_x, bar_y = 40, 175
     bar_max_w = 660
     bar_h = 22
@@ -219,27 +228,32 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
         progress = int((xp / needed_xp) * bar_max_w)
         if progress > 0:
             progress = max(progress, r * 2)
-            draw.rounded_rectangle(
-                [bar_x, bar_y, bar_x + progress, bar_y + bar_h],
-                radius=r,
-                fill=(0, 238, 255)
-            )
+            grad_img = create_gradient(progress, bar_h, (255, 30, 150), (0, 238, 255)).convert("RGBA")
+            mask = Image.new("L", (progress, bar_h), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.rounded_rectangle([0, 0, progress, bar_h], radius=r, fill=255)
+            img.paste(grad_img, (bar_x, bar_y), mask)
 
-    # 5. 头像 + 圆形赛博描边
+            highlight_h = bar_h // 2
+            highlight = Image.new("RGBA", (progress, highlight_h), (255, 255, 255, 40))
+            img.paste(highlight, (bar_x, bar_y), mask)
+
+    # 5. 头像 + 正圆形赛博描边
     av_img = await fetch_avatar(member)
     if av_img:
         av_size = 133
         av_x, av_y = 28, 25
         circle = make_circle_avatar(av_img, av_size).convert("RGBA")
         img.paste(circle, (av_x, av_y), circle)
-        # 正圆形描边：宽 = 高 = av_size
-        draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=2)
+        draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
 
     # 6. 输出
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
+
+
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
     img_h = header + row_h * len(top_users) + 20
