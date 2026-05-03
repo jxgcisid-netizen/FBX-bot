@@ -1,9 +1,11 @@
 import io
 import math
 import random
+import os
 from PIL import Image, ImageDraw
 from main import TEAL, TEAL_DIM, RED, RED_DIM, GOLD, SILVER, BRONZE, RANK_COLORS, RANK_BG, RANK_BAR, get_font
 from utils import fetch_avatar, make_circle_avatar
+
 
 async def create_welcome_card(member, member_count):
     w, h = 800, 440
@@ -170,59 +172,53 @@ async def create_goodbye_card(member, member_count):
 
 
 async def create_rank_card(member, level, xp, needed_xp, rank):
-    import os
-    import logging
-    logger = logging.getLogger("DiscordBot")
-
-    # 诊断：列出 /app 目录下的所有文件
-    app_dir = "/app"
-    if os.path.exists(app_dir):
-        files = os.listdir(app_dir)
-        logger.info(f"诊断: /app 目录文件列表: {files}")
-        for f in files:
-            if f.endswith('.png'):
-                logger.info(f"诊断: 找到PNG文件: {f}")
-    else:
-        logger.error(f"诊断: /app 目录不存在")
-
-    # 诊断：检查图片文件是否真的存在
+    # 1. 读取底图
     bg_path = os.path.join(os.path.dirname(__file__), "Gemini_Generated_Image_t7n65kt7n65kt7n6.png")
-    logger.info(f"诊断: 期望的底图路径: {bg_path}")
-    logger.info(f"诊断: 文件是否存在: {os.path.exists(bg_path)}")
-
-    # 1. 加载底图
     try:
         img = Image.open(bg_path).convert("RGBA")
-        logger.info("诊断: 底图加载成功")
     except FileNotFoundError:
-        logger.error(f"诊断: 底图文件未找到于 {bg_path}")
-        # 回退到纯色背景
-        img = Image.new("RGBA", (900, 220), (15, 12, 40, 255))
-    except Exception as e:
-        logger.error(f"诊断: 加载底图时发生其他错误: {e}")
         img = Image.new("RGBA", (900, 220), (15, 12, 40, 255))
 
+    img_w, img_h = img.size
+    sx = img_w / 900.0
+    sy = img_h / 220.0
+
+    # 2. 用半透明遮罩盖住底图上原来的文字和进度条
+    overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+
+    overlay_draw.rounded_rectangle(
+        [190 * sx, 20 * sy, 680 * sx, 160 * sy],
+        radius=int(10 * sy),
+        fill=(15, 12, 35, 240)
+    )
+    overlay_draw.rounded_rectangle(
+        [20 * sx, 165 * sy, 680 * sx, 210 * sy],
+        radius=int(15 * sy),
+        fill=(15, 12, 35, 240)
+    )
+
+    img = Image.alpha_composite(img, overlay)
     draw = ImageDraw.Draw(img)
 
-    # 2. 字体（用你项目的 get_font）
-    font_name = get_font(42, True)
-    font_info = get_font(24, True)
+    # 3. 字体
+    font_name = get_font(int(42 * sy), True)
+    font_info = get_font(int(24 * sy), True)
 
-    # 3. 写入文字
-    text_x = 210
-
+    # 4. 写入文字
+    text_x = int(210 * sx)
     nickname = member.display_name[:16] + "..." if len(member.display_name) > 16 else member.display_name
-    draw.text((text_x, 35), f"@{nickname}", fill=(255, 255, 255), font=font_name)
 
-    draw.text((text_x, 115), f"Level: {level}", fill=(255, 30, 150), font=font_info)
-    draw.text((text_x + 160, 115), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
-    draw.text((text_x + 420, 115), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
+    draw.text((text_x, int(35 * sy)), f"@{nickname}", fill=(255, 255, 255), font=font_name)
+    draw.text((text_x, int(115 * sy)), f"Level: {level}", fill=(255, 30, 150), font=font_info)
+    draw.text((text_x + int(160 * sx), int(115 * sy)), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
+    draw.text((text_x + int(440 * sx), int(115 * sy)), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    # 4. 进度条
-    bar_x, bar_y = 30, 175
-    bar_max_w = 540
-    bar_h = 24
-    r = 12
+    # 5. 自适应进度条
+    bar_x, bar_y = int(30 * sx), int(175 * sy)
+    bar_max_w = int(540 * sx)
+    bar_h = int(24 * sy)
+    r = int(12 * sy)
 
     if needed_xp > 0:
         progress = int((xp / needed_xp) * bar_max_w)
@@ -234,19 +230,20 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
                 fill=(0, 238, 255)
             )
 
-    # 5. 头像
+    # 6. 头像
     av_img = await fetch_avatar(member)
     if av_img:
-        av_size = 130
-        av_x, av_y = 28, 28
+        av_size = int(130 * sy)
+        av_x, av_y = int(28 * sx), int(28 * sy)
         circle = make_circle_avatar(av_img, av_size)
         img.paste(circle, (av_x, av_y), circle)
 
-    # 6. 输出
+    # 7. 输出
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
+
 
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
