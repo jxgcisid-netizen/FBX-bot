@@ -192,31 +192,35 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
 
     draw = ImageDraw.Draw(img)
 
-    # 2. 字体
+    # 2. 装饰粒子（随机闪烁的小星星/圆点）
+    random.seed(member.id if hasattr(member, 'id') else 42)
+    for _ in range(25):
+        px = random.randint(30, 870)
+        py = random.randint(10, 210)
+        size = random.randint(1, 4)
+        brightness = random.randint(80, 200)
+        # 随机青色或粉色
+        color = (0, 238, 255, brightness) if random.random() > 0.3 else (255, 30, 150, brightness)
+        draw.ellipse([px - size, py - size, px + size, py + size], fill=color)
+
+    # 3. 扫描线纹理（水平细线）
+    for y in range(0, 220, 4):
+        draw.line([(0, y), (900, y)], fill=(255, 255, 255, 6), width=1)
+
+    # 4. 字体
     font_name = get_font(42, True)
     font_info = get_font(24, True)
 
-    # 3. 文字霓虹发光特效
-    def draw_glowing_text(base_img, xy, text, font, main_color, glow_color, radius=3):
-        glow_layer = Image.new("RGBA", base_img.size, (0, 0, 0, 0))
-        glow_draw = ImageDraw.Draw(glow_layer)
-        glow_draw.text(xy, text, fill=glow_color, font=font)
-        glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(radius=radius))
-        base_img.alpha_composite(glow_layer)
-        draw_main = ImageDraw.Draw(base_img)
-        draw_main.text(xy, text, fill=main_color, font=font)
-
+    # 5. 写入文字
     text_x = 220
     nickname = member.display_name[:16] + "..." if len(member.display_name) > 16 else member.display_name
 
-    draw_glowing_text(img, (text_x, 35), f"@{nickname}", font_name, (255, 255, 255, 255), (0, 238, 255, 180), radius=4)
-    draw_glowing_text(img, (text_x, 120), f"Level: {level}", font_info, (255, 30, 150, 255), (255, 30, 150, 120), radius=2)
-    draw_glowing_text(img, (text_x + 150, 120), f"XP: {xp} / {needed_xp}", font_info, (0, 238, 255, 255), (0, 238, 255, 120), radius=2)
-    draw_glowing_text(img, (text_x + 360, 120), f"Rank: {rank}", font_info, (255, 30, 150, 255), (255, 30, 150, 120), radius=2)
+    draw.text((text_x, 35), f"@{nickname}", fill=(255, 255, 255), font=font_name)
+    draw.text((text_x, 120), f"Level: {level}", fill=(255, 30, 150), font=font_info)
+    draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
+    draw.text((text_x + 360, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    draw = ImageDraw.Draw(img)
-
-    # 4. 渐变进度条 + 玻璃高光
+    # 6. 渐变进度条 + 玻璃高光
     bar_x, bar_y = 40, 175
     bar_max_w = 660
     bar_h = 22
@@ -238,7 +242,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
             highlight = Image.new("RGBA", (progress, highlight_h), (255, 255, 255, 40))
             img.paste(highlight, (bar_x, bar_y), mask)
 
-    # 5. 头像 + 正圆形赛博描边
+    # 7. 头像 + 正圆形赛博描边
     av_img = await fetch_avatar(member)
     if av_img:
         av_size = 133
@@ -247,7 +251,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
         img.paste(circle, (av_x, av_y), circle)
         draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
 
-    # 6. 输出
+    # 8. 输出
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
