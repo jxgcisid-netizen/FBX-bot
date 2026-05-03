@@ -207,7 +207,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
     draw.text((text_x + 360, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    # 4. 进度条（简化版，先跳过渐变和高光）
+    # 4. 进度条
     bar_x, bar_y = 40, 175
     bar_max_w = 660
     bar_h = 22
@@ -225,21 +225,21 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
                 fill=(0, 238, 255)
             )
 
-    # 5. 头像
+    # 5. 头像 + 圆形赛博描边
     av_img = await fetch_avatar(member)
     if av_img:
         av_size = 133
         av_x, av_y = 28, 25
-        circle = make_circle_avatar(av_img, av_size)
-        circle = circle.convert("RGBA")
+        circle = make_circle_avatar(av_img, av_size).convert("RGBA")
         img.paste(circle, (av_x, av_y), circle)
+        # 正圆形描边：宽 = 高 = av_size
+        draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=2)
 
     # 6. 输出
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
-
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
     img_h = header + row_h * len(top_users) + 20
