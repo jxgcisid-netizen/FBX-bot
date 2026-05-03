@@ -8,7 +8,6 @@ from utils import fetch_avatar, make_circle_avatar
 
 
 def create_gradient(width, height, color_left, color_right):
-    """生成水平渐变图片"""
     base = Image.new('RGB', (width, 1))
     for x in range(width):
         r = int(color_left[0] + (color_right[0] - color_left[0]) * x / width)
@@ -183,9 +182,6 @@ async def create_goodbye_card(member, member_count):
 
 
 async def create_rank_card(member, level, xp, needed_xp, rank):
-    import os
-    from PIL import Image, ImageDraw, ImageFilter
-
     # 1. 加载底图
     bg_path = os.path.join(os.path.dirname(__file__), "ezeznoob.png")
     try:
@@ -194,12 +190,13 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     except FileNotFoundError:
         img = Image.new("RGBA", (900, 220), (15, 12, 40, 255))
 
+    draw = ImageDraw.Draw(img)
+
     # 2. 字体
     font_name = get_font(42, True)
     font_info = get_font(24, True)
 
-    # 3. 写入文字（暂时去掉发光特效，先确保能跑通）
-    draw = ImageDraw.Draw(img)
+    # 3. 写入文字
     text_x = 220
     nickname = member.display_name[:16] + "..." if len(member.display_name) > 16 else member.display_name
 
@@ -220,14 +217,12 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
         progress = int((xp / needed_xp) * bar_max_w)
         if progress > 0:
             progress = max(progress, r * 2)
-            grad_img = create_gradient(progress, bar_h, (255, 30, 150), (0, 238, 255))
-            grad_img = grad_img.convert("RGBA")
+            grad_img = create_gradient(progress, bar_h, (255, 30, 150), (0, 238, 255)).convert("RGBA")
             mask = Image.new("L", (progress, bar_h), 0)
             mask_draw = ImageDraw.Draw(mask)
             mask_draw.rounded_rectangle([0, 0, progress, bar_h], radius=r, fill=255)
             img.paste(grad_img, (bar_x, bar_y), mask)
 
-            # 玻璃高光
             highlight_h = bar_h // 2
             highlight = Image.new("RGBA", (progress, highlight_h), (255, 255, 255, 40))
             img.paste(highlight, (bar_x, bar_y), mask)
