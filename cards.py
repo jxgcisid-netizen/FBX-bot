@@ -232,12 +232,12 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
 
     # 5. 头像 + 正圆形赛博描边
     av_img = await fetch_avatar(member)
-    if av_img:
-        av_size = 133
-        av_x, av_y = 32, 25
-        circle = make_circle_avatar(av_img, av_size).convert("RGBA")
-        img.paste(circle, (av_x, av_y), circle)
-        draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
+if av_img:
+    av_size = 133
+    av_x, av_y = 32, 25  # 改这里调位置
+    circle = make_circle_avatar(av_img, av_size).convert("RGBA")
+    img.paste(circle, (av_x, av_y), circle.split()[3])
+    draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
 
     # 6. 输出
     buf = io.BytesIO()
