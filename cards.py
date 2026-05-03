@@ -229,7 +229,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     av_img = await fetch_avatar(member)
     if av_img:
         av_size = 133
-        av_x, av_y = 28, 25
+        av_x, av_y = 32, 25
         circle = make_circle_avatar(av_img, av_size).convert("RGBA")
         img.paste(circle, (av_x, av_y), circle)
         draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
