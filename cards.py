@@ -175,7 +175,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     import os
 
     # 1. 加载底图
-    bg_path = os.path.join(os.path.dirname(__file__), "ezeznoob")
+    bg_path = os.path.join(os.path.dirname(__file__), "ezeznoob.png")
     try:
         img = Image.open(bg_path).convert("RGBA")
         img = img.resize((900, 220))
