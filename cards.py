@@ -234,7 +234,7 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     av_img = await fetch_avatar(member)
     if av_img:
         av_size = 136
-        av_x, av_y = 29, 27
+        av_x, av_y = 26, 26
         circle = make_circle_avatar(av_img, av_size)
         img.paste(circle, (av_x, av_y), circle)
 
