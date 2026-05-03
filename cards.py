@@ -233,8 +233,8 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     # 5. 头像（缩小并居中在发光环内）
     av_img = await fetch_avatar(member)
     if av_img:
-        av_size = 136
-        av_x, av_y = 26, 26
+        av_size = 133
+        av_x, av_y = 26, 25
         circle = make_circle_avatar(av_img, av_size)
         img.paste(circle, (av_x, av_y), circle)
 
