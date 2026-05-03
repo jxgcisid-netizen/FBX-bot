@@ -2,7 +2,7 @@ import io
 import math
 import random
 import os
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 from main import TEAL, TEAL_DIM, RED, RED_DIM, GOLD, SILVER, BRONZE, RANK_COLORS, RANK_BG, RANK_BAR, get_font
 from utils import fetch_avatar, make_circle_avatar
 
