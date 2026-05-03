@@ -172,54 +172,45 @@ async def create_goodbye_card(member, member_count):
 
 
 async def create_rank_card(member, level, xp, needed_xp, rank):
-    # 1. 读取底图
-    bg_path = os.path.join(os.path.dirname(__file__), "Gemini_Generated_Image_t7n65kt7n65kt7n6.png")
+    import os
+
+    # 1. 加载底图
+    bg_path = os.path.join(os.path.dirname(__file__), "ezeznoob")
     try:
         img = Image.open(bg_path).convert("RGBA")
+        img = img.resize((900, 220))
     except FileNotFoundError:
         img = Image.new("RGBA", (900, 220), (15, 12, 40, 255))
 
-    img_w, img_h = img.size
-    sx = img_w / 900.0
-    sy = img_h / 220.0
-
-    # 2. 用半透明遮罩盖住底图上原来的文字和进度条
-    overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-    overlay_draw = ImageDraw.Draw(overlay)
-
-    overlay_draw.rounded_rectangle(
-        [190 * sx, 20 * sy, 680 * sx, 160 * sy],
-        radius=int(10 * sy),
-        fill=(15, 12, 35, 240)
-    )
-    overlay_draw.rounded_rectangle(
-        [20 * sx, 165 * sy, 680 * sx, 210 * sy],
-        radius=int(15 * sy),
-        fill=(15, 12, 35, 240)
-    )
-
-    img = Image.alpha_composite(img, overlay)
     draw = ImageDraw.Draw(img)
 
-    # 3. 字体
-    font_name = get_font(int(42 * sy), True)
-    font_info = get_font(int(24 * sy), True)
+    # 2. 字体
+    font_name = get_font(42, True)
+    font_info = get_font(24, True)
 
-    # 4. 写入文字
-    text_x = int(210 * sx)
+    # 3. 写入文字
+    text_x = 220
     nickname = member.display_name[:16] + "..." if len(member.display_name) > 16 else member.display_name
 
-    draw.text((text_x, int(35 * sy)), f"@{nickname}", fill=(255, 255, 255), font=font_name)
-    draw.text((text_x, int(115 * sy)), f"Level: {level}", fill=(255, 30, 150), font=font_info)
-    draw.text((text_x + int(160 * sx), int(115 * sy)), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
-    draw.text((text_x + int(440 * sx), int(115 * sy)), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
+    draw.text((text_x, 35), f"@{nickname}", fill=(255, 255, 255), font=font_name)
+    draw.text((text_x, 120), f"Level: {level}", fill=(255, 30, 150), font=font_info)
+    draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
+    draw.text((text_x + 420, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    # 5. 自适应进度条
-    bar_x, bar_y = int(30 * sx), int(175 * sy)
-    bar_max_w = int(540 * sx)
-    bar_h = int(24 * sy)
-    r = int(12 * sy)
+    # 4. 进度条（底槽 + 进度）
+    bar_x, bar_y = 40, 175
+    bar_max_w = 660
+    bar_h = 22
+    r = 11
 
+    # 底槽
+    draw.rounded_rectangle(
+        [bar_x, bar_y, bar_x + bar_max_w, bar_y + bar_h],
+        radius=r,
+        fill=(20, 25, 45, 230)
+    )
+
+    # 进度
     if needed_xp > 0:
         progress = int((xp / needed_xp) * bar_max_w)
         if progress > 0:
@@ -230,20 +221,19 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
                 fill=(0, 238, 255)
             )
 
-    # 6. 头像
+    # 5. 头像
     av_img = await fetch_avatar(member)
     if av_img:
-        av_size = int(130 * sy)
-        av_x, av_y = int(28 * sx), int(28 * sy)
+        av_size = 140
+        av_x, av_y = 35, 40
         circle = make_circle_avatar(av_img, av_size)
         img.paste(circle, (av_x, av_y), circle)
 
-    # 7. 输出
+    # 6. 输出
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
-
 
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
