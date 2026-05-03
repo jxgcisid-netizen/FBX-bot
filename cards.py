@@ -206,20 +206,18 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
     draw.text((text_x + 360, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    # 4. 渐变进度条（填充部分粉色→青色渐变，空余部分白色半透明）
+    # 4. 渐变进度条
     bar_x, bar_y = 40, 175
     bar_max_w = 660
     bar_h = 22
     r = 11
 
-    # 空余部分（白色半透明底槽）
     draw.rounded_rectangle(
         [bar_x, bar_y, bar_x + bar_max_w, bar_y + bar_h],
         radius=r,
         fill=(255, 255, 255, 40)
     )
 
-    # 填充部分（粉色→青色渐变）
     if needed_xp > 0:
         progress = int((xp / needed_xp) * bar_max_w)
         if progress > 0:
@@ -232,12 +230,12 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
 
     # 5. 头像 + 正圆形赛博描边
     av_img = await fetch_avatar(member)
-if av_img:
-    av_size = 133
-    av_x, av_y = 32, 25  # 改这里调位置
-    circle = make_circle_avatar(av_img, av_size).convert("RGBA")
-    img.paste(circle, (av_x, av_y), circle.split()[3])
-    draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
+    if av_img:
+        av_size = 133
+        av_x, av_y = 32, 25
+        circle = make_circle_avatar(av_img, av_size).convert("RGBA")
+        img.paste(circle, (av_x, av_y), circle.split()[3])
+        draw.ellipse([av_x, av_y, av_x + av_size, av_y + av_size], outline=(0, 238, 255, 180), width=3)
 
     # 6. 输出
     buf = io.BytesIO()
