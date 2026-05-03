@@ -180,7 +180,6 @@ async def create_goodbye_card(member, member_count):
     buf.seek(0)
     return buf
 
-
 async def create_rank_card(member, level, xp, needed_xp, rank):
     import os
 
@@ -207,14 +206,20 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     draw.text((text_x + 150, 120), f"XP: {xp} / {needed_xp}", fill=(0, 238, 255), font=font_info)
     draw.text((text_x + 360, 120), f"Rank: {rank}", fill=(255, 30, 150), font=font_info)
 
-    # 4. 渐变进度条（先把渐变图转成 RGBA 再贴）
+    # 4. 渐变进度条（填充部分粉色→青色渐变，空余部分白色半透明）
     bar_x, bar_y = 40, 175
     bar_max_w = 660
     bar_h = 22
     r = 11
 
-    draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_max_w, bar_y + bar_h], radius=r, fill=(20, 25, 45, 230))
+    # 空余部分（白色半透明底槽）
+    draw.rounded_rectangle(
+        [bar_x, bar_y, bar_x + bar_max_w, bar_y + bar_h],
+        radius=r,
+        fill=(255, 255, 255, 40)
+    )
 
+    # 填充部分（粉色→青色渐变）
     if needed_xp > 0:
         progress = int((xp / needed_xp) * bar_max_w)
         if progress > 0:
@@ -239,7 +244,6 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
-
 async def create_leaderboard_card(guild, top_users, mode="xp"):
     row_h, av_w, img_w, header = 90, 82, 740, 70
     img_h = header + row_h * len(top_users) + 20
