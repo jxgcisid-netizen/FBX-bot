@@ -3,7 +3,6 @@ from discord import app_commands, Interaction
 from discord.ext import commands
 import asyncio
 import re
-import subprocess
 from main import logger
 
 SEARCH_SOURCES = [
@@ -71,7 +70,7 @@ class MusicCommands(commands.GroupCog, name="music"):
 
     async def ensure_voice(self, interaction: Interaction) -> bool:
         if not interaction.user.voice:
-            await interaction.response.send_message("需要先加入一个语音频道", ephemeral=True)
+            await interaction.followup.send("需要先加入一个语音频道", ephemeral=True)
             return False
         if not interaction.guild.voice_client:
             await interaction.user.voice.channel.connect()
@@ -135,7 +134,6 @@ class MusicCommands(commands.GroupCog, name="music"):
         if not await self.ensure_voice(interaction):
             return
 
-        # 确定搜索源
         if "youtube.com" in query or "youtu.be" in query:
             actual_source = "ytsearch"
         elif "soundcloud.com" in query:
