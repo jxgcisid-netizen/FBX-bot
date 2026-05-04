@@ -4,10 +4,8 @@ from discord.ext import commands
 import asyncio
 import re
 import subprocess
-import io
 from main import logger
 
-# ==================== 搜索源 ====================
 SEARCH_SOURCES = [
     app_commands.Choice(name="自动 (YT > B站)", value="auto"),
     app_commands.Choice(name="YouTube", value="ytsearch"),
@@ -75,75 +73,59 @@ class MusicCommands(commands.GroupCog, name="music"):
         if not interaction.user.voice:
             await interaction.response.send_message("需要先加入一个语音频道", ephemeral=True)
             return False
-
         if not interaction.guild.voice_client:
-            await interaction.user.voice.channel.connect(self_deaf=True)
+            await interaction.user.voice.channel.connect()
         elif interaction.guild.voice_client.channel != interaction.user.voice.channel:
             await interaction.guild.voice_client.move_to(interaction.user.voice.channel)
-
         return True
 
-    def get_audio_url(self, query: str, source: str = "ytsearch") -> str | None:
-        """使用 yt-dlp 提取音频直链"""
+    async def get_audio_url(self, query: str, source: str = "ytsearch") -> str | None:
         try:
+            cmd = ["yt-dlp", "-f", "bestaudio/best", "--get-url", "--no-playlist", "--quiet"]
             if source == "bili" or "bilibili.com" in query or "b23.tv" in query:
-                search_query = query
-            elif source == "scsearch":
-                search_query = f"scsearch:{query}"
+                cmd.append(query)
             else:
-                search_query = f"ytsearch:{query}"
+                cmd.append(f"ytsearch:{query}")
 
-            cmd = [
-                "yt-dlp",
-                "-f", "bestaudio/best",
-                "--get-url",
-                "--no-playlist",
-                "--quiet",
-                search_query
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=12)
+            if stdout and stdout.strip():
+                return stdout.decode().strip()
+            return None
+        except asyncio.TimeoutError:
+            logger.warning(f"获取音频URL超时: {query}")
             return None
         except Exception as e:
-            logger.error(f"yt-dlp 获取音频失败: {e}")
+            logger.error(f"获取音频URL失败: {e}")
             return None
 
     async def get_video_info(self, query: str, source: str = "ytsearch") -> dict:
-    """获取视频标题，带超时保护"""
-    try:
-        if source == "bili" or "bilibili.com" in query or "b23.tv" in query:
-            search_query = query
-        elif source == "scsearch":
-            search_query = f"scsearch:{query}"
-        else:
-            search_query = f"ytsearch:{query}"
+        try:
+            cmd = ["yt-dlp", "--get-title", "--no-playlist", "--quiet"]
+            if source == "bili" or "bilibili.com" in query or "b23.tv" in query:
+                cmd.append(query)
+            else:
+                cmd.append(f"ytsearch:{query}")
 
-        cmd = [
-            "yt-dlp",
-            "--get-title",
-            "--no-playlist",
-            "--quiet",
-            search_query
-        ]
-
-        # 用 asyncio.wait_for 防止卡死
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
-
-        if stdout and stdout.strip():
-            return {"title": stdout.decode().strip()}
-        return {"title": query}
-    except asyncio.TimeoutError:
-        logger.warning(f"获取视频信息超时: {query}")
-        return {"title": query}
-    except Exception as e:
-        logger.error(f"获取视频信息失败: {e}")
-        return {"title": query}
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+            if stdout and stdout.strip():
+                return {"title": stdout.decode().strip()}
+            return {"title": query}
+        except asyncio.TimeoutError:
+            logger.warning(f"获取视频信息超时: {query}")
+            return {"title": query}
+        except Exception as e:
+            logger.error(f"获取视频信息失败: {e}")
+            return {"title": query}
 
     @app_commands.command(name="play", description="播放一首歌曲")
     @app_commands.choices(source=SEARCH_SOURCES)
@@ -165,13 +147,12 @@ class MusicCommands(commands.GroupCog, name="music"):
         else:
             actual_source = "ytsearch"
 
-        # 获取音频
-        audio_url = self.get_audio_url(query, actual_source)
+        audio_url = await self.get_audio_url(query, actual_source)
         if not audio_url:
-            await interaction.followup.send("未找到歌曲或获取音频失败，换个关键词试试")
+            await interaction.followup.send("未找到歌曲或获取音频失败")
             return
 
-        info = self.get_video_info(query, actual_source)
+        info = await self.get_video_info(query, actual_source)
         title = info.get("title", query)
 
         player = self.get_player(interaction.guild.id)
@@ -182,7 +163,6 @@ class MusicCommands(commands.GroupCog, name="music"):
             await interaction.followup.send(f"已加入队列: **{title}**")
             return
 
-        # 播放
         try:
             source = discord.FFmpegPCMAudio(
                 audio_url,
