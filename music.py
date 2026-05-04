@@ -9,32 +9,74 @@ from main import logger
 # ==================== Lavalink 节点列表 ====================
 LAVALINK_NODES = [
     {
+        "host": "lavalink.jirayu.net",
+        "port": 13592,
+        "password": "youshallnotpass",
+        "secure": False,
+        "name": "Jirayu"
+    },
+    {
         "host": "lavalinkv4.serenetia.com",
-        "port": 443,
-        "password": "9f4fd53e593108bf-HKG",
-        "secure": True,
-        "name": "Serenetia-HKG"
+        "port": 80,
+        "password": "https://seretia.link/discord",
+        "secure": False,
+        "name": "Serenetia"
     },
     {
-        "host": "lava-v4.ajieblogs.eu.org",
-        "port": 443,
-        "password": "https://dsc.gg/ajidevserver",
-        "secure": True,
-        "name": "AjieBlogs"
+        "host": "sg1-nodelink.nyxbot.app",
+        "port": 3000,
+        "password": "nyxbot.app/support",
+        "secure": False,
+        "name": "Nyx-SG1"
     },
     {
-        "host": "lavalinkv4.eu.nadeko.net",
-        "port": 443,
+        "host": "sg2-nodelink.nyxbot.app",
+        "port": 3000,
+        "password": "nyxbot.app/support",
+        "secure": False,
+        "name": "Nyx-SG2"
+    },
+    {
+        "host": "lava.g3v.co.uk",
+        "port": 9008,
+        "password": "lavalinklol",
+        "secure": False,
+        "name": "G3V"
+    },
+    {
+        "host": "lavalink.triniumhost.com",
+        "port": 4333,
+        "password": "free",
+        "secure": False,
+        "name": "Trinium-1"
+    },
+    {
+        "host": "lavalink.triniumhost.com",
+        "port": 2333,
+        "password": "kirito",
+        "secure": False,
+        "name": "Trinium-2"
+    },
+    {
+        "host": "n3.nexcloud.in",
+        "port": 2026,
+        "password": "nexcloud",
+        "secure": False,
+        "name": "NexCloud"
+    },
+    {
+        "host": "omega.vexanode.cloud",
+        "port": 2031,
+        "password": "https://discord.vexanode.cloud",
+        "secure": False,
+        "name": "VexaNode"
+    },
+    {
+        "host": "lava.kasawa.pro",
+        "port": 2333,
         "password": "youshallnotpass",
-        "secure": True,
-        "name": "Nadeko-EU"
-    },
-    {
-        "host": "lavalinkv4.us.nadeko.net",
-        "port": 443,
-        "password": "youshallnotpass",
-        "secure": True,
-        "name": "Nadeko-US"
+        "secure": False,
+        "name": "Kasawa"
     },
 ]
 
