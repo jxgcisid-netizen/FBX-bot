@@ -11,11 +11,15 @@ RUN apt-get update && apt-get install -y \
     fonts-wqy-zenhei \
     tzdata \
     gcc \
+    g++ \
+    make \
+    python3-dev \
     libpq-dev \
+    libsodium-dev \
+    libffi-dev \
     ffmpeg \
     curl \
     openssh-client \
-    libsodium-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' \
