@@ -77,7 +77,7 @@ class MusicCommands(commands.GroupCog, name="music"):
             return False
 
         if not interaction.guild.voice_client:
-            await interaction.user.voice.channel.connect()
+            await interaction.user.voice.channel.connect(self_deaf=True)
         elif interaction.guild.voice_client.channel != interaction.user.voice.channel:
             await interaction.guild.voice_client.move_to(interaction.user.voice.channel)
 
