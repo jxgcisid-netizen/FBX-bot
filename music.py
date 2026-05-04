@@ -1,85 +1,13 @@
 import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
-import wavelink
 import asyncio
 import re
+import subprocess
+import io
 from main import logger
 
-# ==================== Lavalink 节点列表 ====================
-LAVALINK_NODES = [
-    {
-        "host": "lavalink.jirayu.net",
-        "port": 13592,
-        "password": "youshallnotpass",
-        "secure": False,
-        "name": "Jirayu"
-    },
-    {
-        "host": "lavalinkv4.serenetia.com",
-        "port": 80,
-        "password": "https://seretia.link/discord",
-        "secure": False,
-        "name": "Serenetia"
-    },
-    {
-        "host": "sg1-nodelink.nyxbot.app",
-        "port": 3000,
-        "password": "nyxbot.app/support",
-        "secure": False,
-        "name": "Nyx-SG1"
-    },
-    {
-        "host": "sg2-nodelink.nyxbot.app",
-        "port": 3000,
-        "password": "nyxbot.app/support",
-        "secure": False,
-        "name": "Nyx-SG2"
-    },
-    {
-        "host": "lava.g3v.co.uk",
-        "port": 9008,
-        "password": "lavalinklol",
-        "secure": False,
-        "name": "G3V"
-    },
-    {
-        "host": "lavalink.triniumhost.com",
-        "port": 4333,
-        "password": "free",
-        "secure": False,
-        "name": "Trinium-1"
-    },
-    {
-        "host": "lavalink.triniumhost.com",
-        "port": 2333,
-        "password": "kirito",
-        "secure": False,
-        "name": "Trinium-2"
-    },
-    {
-        "host": "n3.nexcloud.in",
-        "port": 2026,
-        "password": "nexcloud",
-        "secure": False,
-        "name": "NexCloud"
-    },
-    {
-        "host": "omega.vexanode.cloud",
-        "port": 2031,
-        "password": "https://discord.vexanode.cloud",
-        "secure": False,
-        "name": "VexaNode"
-    },
-    {
-        "host": "lava.kasawa.pro",
-        "port": 2333,
-        "password": "youshallnotpass",
-        "secure": False,
-        "name": "Kasawa"
-    },
-]
-
+# ==================== 搜索源 ====================
 SEARCH_SOURCES = [
     app_commands.Choice(name="自动 (YT > B站)", value="auto"),
     app_commands.Choice(name="YouTube", value="ytsearch"),
@@ -137,43 +65,6 @@ class MusicCommands(commands.GroupCog, name="music"):
     def __init__(self, bot):
         self.bot = bot
         self.players: dict[int, MusicPlayer] = {}
-        self.current_node_index = 0
-
-    async def connect_lavalink(self):
-        for attempt in range(len(LAVALINK_NODES)):
-            node_info = LAVALINK_NODES[self.current_node_index % len(LAVALINK_NODES)]
-            try:
-                existing = wavelink.Pool.get_node(name=node_info["name"])
-                if existing:
-                    return existing
-            except:
-                pass
-
-            try:
-                node = await wavelink.Pool.connect(
-                    client=self.bot,
-                    nodes=[
-                        wavelink.Node(
-                            uri=f"{'wss' if node_info['secure'] else 'ws'}://{node_info['host']}:{node_info['port']}",
-                            password=node_info["password"],
-                            name=node_info["name"],
-                        )
-                    ],
-                )
-                logger.info(f"Lavalink 已连接: {node_info['name']}")
-                return node
-            except Exception as e:
-                logger.warning(f"节点 {node_info['name']} 连接失败: {e}，尝试下一个...")
-                self.current_node_index += 1
-
-        logger.error("所有 Lavalink 节点均无法连接")
-        return None
-
-    def get_node(self):
-        try:
-            return wavelink.Pool.get_node()
-        except:
-            return None
 
     def get_player(self, guild_id: int) -> MusicPlayer:
         if guild_id not in self.players:
@@ -185,20 +76,62 @@ class MusicCommands(commands.GroupCog, name="music"):
             await interaction.response.send_message("需要先加入一个语音频道", ephemeral=True)
             return False
 
-        node = self.get_node()
-        if node is None:
-            if interaction.response.is_done():
-                await interaction.followup.send("音乐服务暂时不可用", ephemeral=True)
-            else:
-                await interaction.response.send_message("音乐服务暂时不可用", ephemeral=True)
-            return False
-
         if not interaction.guild.voice_client:
-            await interaction.user.voice.channel.connect(cls=wavelink.Player)
+            await interaction.user.voice.channel.connect()
         elif interaction.guild.voice_client.channel != interaction.user.voice.channel:
             await interaction.guild.voice_client.move_to(interaction.user.voice.channel)
 
         return True
+
+    def get_audio_url(self, query: str, source: str = "ytsearch") -> str | None:
+        """使用 yt-dlp 提取音频直链"""
+        try:
+            if source == "bili" or "bilibili.com" in query or "b23.tv" in query:
+                search_query = query
+            elif source == "scsearch":
+                search_query = f"scsearch:{query}"
+            else:
+                search_query = f"ytsearch:{query}"
+
+            cmd = [
+                "yt-dlp",
+                "-f", "bestaudio/best",
+                "--get-url",
+                "--no-playlist",
+                "--quiet",
+                search_query
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+            return None
+        except Exception as e:
+            logger.error(f"yt-dlp 获取音频失败: {e}")
+            return None
+
+    def get_video_info(self, query: str, source: str = "ytsearch") -> dict:
+        """获取视频标题"""
+        try:
+            if source == "bili":
+                search_query = query
+            elif source == "scsearch":
+                search_query = f"scsearch:{query}"
+            else:
+                search_query = f"ytsearch:{query}"
+
+            cmd = [
+                "yt-dlp",
+                "--get-title",
+                "--no-playlist",
+                "--quiet",
+                search_query
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if result.returncode == 0 and result.stdout.strip():
+                return {"title": result.stdout.strip()}
+            return {"title": query}
+        except:
+            return {"title": query}
 
     @app_commands.command(name="play", description="播放一首歌曲")
     @app_commands.choices(source=SEARCH_SOURCES)
@@ -208,107 +141,121 @@ class MusicCommands(commands.GroupCog, name="music"):
         if not await self.ensure_voice(interaction):
             return
 
-        node = self.get_node()
-        if node is None:
-            await interaction.followup.send("音乐服务暂时不可用")
-            return
-
-        if extract_bilibili_id(query):
-            actual_source = "bili"
-        elif "youtube.com" in query or "youtu.be" in query:
+        # 确定搜索源
+        if "youtube.com" in query or "youtu.be" in query:
             actual_source = "ytsearch"
         elif "soundcloud.com" in query:
             actual_source = "scsearch"
-        elif "bilibili.com" in query or "b23.tv" in query:
+        elif "bilibili.com" in query or "b23.tv" in query or extract_bilibili_id(query):
             actual_source = "bili"
         elif source != "auto":
             actual_source = source
         else:
             actual_source = "ytsearch"
 
-        try:
-            tracks = await wavelink.Playable.search(query, node=node, source=actual_source)
-        except Exception as e:
-            logger.error(f"搜索失败: {e}")
-            try:
-                tracks = await wavelink.Playable.search(query, node=node, source="ytsearch")
-            except:
-                await interaction.followup.send("搜索歌曲失败，请稍后再试")
-                return
-
-        if not tracks:
-            await interaction.followup.send("未找到相关歌曲")
+        # 获取音频
+        audio_url = self.get_audio_url(query, actual_source)
+        if not audio_url:
+            await interaction.followup.send("未找到歌曲或获取音频失败，换个关键词试试")
             return
 
-        track = tracks[0]
+        info = self.get_video_info(query, actual_source)
+        title = info.get("title", query)
+
         player = self.get_player(interaction.guild.id)
         vc = interaction.guild.voice_client
 
-        if isinstance(vc, wavelink.Player):
-            if vc.playing or not vc.paused:
-                player.add(track)
-                await interaction.followup.send(f"已加入队列: **{track.title}**")
-            else:
-                await vc.play(track)
-                player.current = track
-                await interaction.followup.send(f"正在播放: **{track.title}**")
+        if vc and vc.is_playing():
+            player.add({"url": audio_url, "title": title})
+            await interaction.followup.send(f"已加入队列: **{title}**")
+            return
+
+        # 播放
+        try:
+            source = discord.FFmpegPCMAudio(
+                audio_url,
+                before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
+            )
+            vc.play(source, after=lambda e: self.bot.loop.create_task(self.play_next(interaction.guild.id)))
+            player.current = {"url": audio_url, "title": title}
+            await interaction.followup.send(f"正在播放: **{title}**")
+        except Exception as e:
+            logger.error(f"播放失败: {e}")
+            await interaction.followup.send("播放失败，请稍后再试")
+
+    async def play_next(self, guild_id: int):
+        player = self.get_player(guild_id)
+        guild = self.bot.get_guild(guild_id)
+        if not guild or not guild.voice_client:
+            return
+
+        next_track = player.get_next()
+        if next_track:
+            try:
+                source = discord.FFmpegPCMAudio(
+                    next_track["url"],
+                    before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
+                )
+                guild.voice_client.play(
+                    source,
+                    after=lambda e: self.bot.loop.create_task(self.play_next(guild_id))
+                )
+            except:
+                pass
         else:
-            await interaction.followup.send("语音连接异常")
+            await asyncio.sleep(60)
+            if guild.voice_client and not guild.voice_client.is_playing():
+                await guild.voice_client.disconnect()
 
     @app_commands.command(name="skip", description="跳过当前歌曲")
     async def skip(self, interaction: Interaction):
-        await interaction.response.defer()
         vc = interaction.guild.voice_client
-        if vc and isinstance(vc, wavelink.Player) and vc.playing:
-            await vc.stop()
-            await interaction.followup.send("已跳过")
+        if vc and vc.is_playing():
+            vc.stop()
+            await interaction.response.send_message("已跳过")
         else:
-            await interaction.followup.send("当前没有正在播放的歌曲")
+            await interaction.response.send_message("当前没有正在播放的歌曲")
 
     @app_commands.command(name="stop", description="停止播放并离开")
     async def stop(self, interaction: Interaction):
-        await interaction.response.defer()
         player = self.get_player(interaction.guild.id)
         player.clear()
         vc = interaction.guild.voice_client
-        if vc and isinstance(vc, wavelink.Player):
+        if vc:
             await vc.disconnect()
-        await interaction.followup.send("已停止播放")
+        await interaction.response.send_message("已停止播放")
 
     @app_commands.command(name="queue", description="查看播放队列")
     async def queue(self, interaction: Interaction):
-        await interaction.response.defer()
         player = self.get_player(interaction.guild.id)
         lines = []
         if player.current:
-            lines.append(f"正在播放: {player.current.title}")
+            lines.append(f"正在播放: {player.current['title']}")
         lines.append(f"队列: {len(player.queue)} 首")
         for i, t in enumerate(player.queue[:10], 1):
-            lines.append(f"  {i}. {t.title}")
+            lines.append(f"  {i}. {t['title']}")
         if len(player.queue) > 10:
             lines.append(f"  ...还有 {len(player.queue) - 10} 首")
         lines.append(f"循环模式: {player.loop_mode}")
-        await interaction.followup.send("\n".join(lines))
+        await interaction.response.send_message("\n".join(lines))
 
     @app_commands.command(name="pause", description="暂停播放")
     async def pause(self, interaction: Interaction):
-        await interaction.response.defer()
         vc = interaction.guild.voice_client
-        if vc and isinstance(vc, wavelink.Player) and vc.playing:
-            await vc.pause()
-            await interaction.followup.send("已暂停")
+        if vc and vc.is_playing():
+            vc.pause()
+            await interaction.response.send_message("已暂停")
         else:
-            await interaction.followup.send("当前没有正在播放的歌曲")
+            await interaction.response.send_message("当前没有正在播放的歌曲")
 
     @app_commands.command(name="resume", description="继续播放")
     async def resume(self, interaction: Interaction):
-        await interaction.response.defer()
         vc = interaction.guild.voice_client
-        if vc and isinstance(vc, wavelink.Player) and vc.paused:
-            await vc.resume()
-            await interaction.followup.send("继续播放")
+        if vc and vc.is_paused():
+            vc.resume()
+            await interaction.response.send_message("继续播放")
         else:
-            await interaction.followup.send("当前没有暂停的歌曲")
+            await interaction.response.send_message("当前没有暂停的歌曲")
 
     @app_commands.command(name="loop", description="设置循环模式")
     @app_commands.choices(mode=[
@@ -325,9 +272,8 @@ class MusicCommands(commands.GroupCog, name="music"):
     @app_commands.command(name="volume", description="设置音量")
     async def volume(self, interaction: Interaction, level: int):
         vc = interaction.guild.voice_client
-        if vc and isinstance(vc, wavelink.Player):
-            level = max(1, min(level, 100))
-            await vc.set_volume(level)
+        if vc and vc.is_playing():
+            vc.source.volume = max(0, min(level, 100)) / 100
             await interaction.response.send_message(f"音量: **{level}%**")
         else:
             await interaction.response.send_message("当前没有播放中的歌曲")
@@ -343,35 +289,11 @@ class MusicCommands(commands.GroupCog, name="music"):
 
     @app_commands.command(name="nowplaying", description="当前播放")
     async def nowplaying(self, interaction: Interaction):
-        await interaction.response.defer()
         player = self.get_player(interaction.guild.id)
         if player.current:
-            t = player.current
-            await interaction.followup.send(
-                f"**{t.title}**\n作者: {t.author}\n时长: {t.length//60000}:{(t.length//1000)%60:02d}"
-            )
+            await interaction.response.send_message(f"**{player.current['title']}**")
         else:
-            await interaction.followup.send("当前没有正在播放的歌曲")
-
-    @commands.Cog.listener()
-    async def on_wavelink_track_end(self, payload):
-        player = self.get_player(payload.player.guild.id)
-        next_track = player.get_next()
-        if next_track:
-            await payload.player.play(next_track)
-        else:
-            await payload.player.disconnect()
-
-    @commands.Cog.listener()
-    async def on_voice_state_update(self, member, before, after):
-        if member.bot:
-            return
-        vc = member.guild.voice_client
-        if vc and isinstance(vc, wavelink.Player):
-            if len(vc.channel.members) == 1:
-                await asyncio.sleep(60)
-                if len(vc.channel.members) == 1:
-                    await vc.disconnect()
+            await interaction.response.send_message("当前没有正在播放的歌曲")
 
 
 async def setup(bot):
