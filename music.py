@@ -109,29 +109,41 @@ class MusicCommands(commands.GroupCog, name="music"):
             logger.error(f"yt-dlp 获取音频失败: {e}")
             return None
 
-    def get_video_info(self, query: str, source: str = "ytsearch") -> dict:
-        """获取视频标题"""
-        try:
-            if source == "bili":
-                search_query = query
-            elif source == "scsearch":
-                search_query = f"scsearch:{query}"
-            else:
-                search_query = f"ytsearch:{query}"
+    async def get_video_info(self, query: str, source: str = "ytsearch") -> dict:
+    """获取视频标题，带超时保护"""
+    try:
+        if source == "bili" or "bilibili.com" in query or "b23.tv" in query:
+            search_query = query
+        elif source == "scsearch":
+            search_query = f"scsearch:{query}"
+        else:
+            search_query = f"ytsearch:{query}"
 
-            cmd = [
-                "yt-dlp",
-                "--get-title",
-                "--no-playlist",
-                "--quiet",
-                search_query
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            if result.returncode == 0 and result.stdout.strip():
-                return {"title": result.stdout.strip()}
-            return {"title": query}
-        except:
-            return {"title": query}
+        cmd = [
+            "yt-dlp",
+            "--get-title",
+            "--no-playlist",
+            "--quiet",
+            search_query
+        ]
+
+        # 用 asyncio.wait_for 防止卡死
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+        if stdout and stdout.strip():
+            return {"title": stdout.decode().strip()}
+        return {"title": query}
+    except asyncio.TimeoutError:
+        logger.warning(f"获取视频信息超时: {query}")
+        return {"title": query}
+    except Exception as e:
+        logger.error(f"获取视频信息失败: {e}")
+        return {"title": query}
 
     @app_commands.command(name="play", description="播放一首歌曲")
     @app_commands.choices(source=SEARCH_SOURCES)
