@@ -73,38 +73,25 @@ class MusicCommands(commands.GroupCog, name="music"):
             await interaction.followup.send("需要先加入一个语音频道", ephemeral=True)
             return False
         if not interaction.guild.voice_client:
-            await interaction.user.voice.channel.connect()
+            await interaction.user.voice.channel.connect(self_deaf=True, reconnect=False)
         elif interaction.guild.voice_client.channel != interaction.user.voice.channel:
             await interaction.guild.voice_client.move_to(interaction.user.voice.channel)
         return True
 
-    async def get_audio_url(self, query: str, source: str = "ytsearch") -> str | None:
+    async def search_track(self, query: str, source: str = "ytsearch") -> dict | None:
+        """一次搜索同时获取 URL 和标题"""
         try:
-            cmd = ["yt-dlp", "-f", "bestaudio/best", "--get-url", "--no-playlist", "--quiet"]
-            if source == "bili" or "bilibili.com" in query or "b23.tv" in query:
-                cmd.append(query)
-            else:
-                cmd.append(f"ytsearch:{query}")
-
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=12)
-            if stdout and stdout.strip():
-                return stdout.decode().strip()
-            return None
-        except asyncio.TimeoutError:
-            logger.warning(f"获取音频URL超时: {query}")
-            return None
-        except Exception as e:
-            logger.error(f"获取音频URL失败: {e}")
-            return None
-
-    async def get_video_info(self, query: str, source: str = "ytsearch") -> dict:
-        try:
-            cmd = ["yt-dlp", "--get-title", "--no-playlist", "--quiet"]
+            cmd = [
+                "yt-dlp",
+                "-f", "bestaudio/best",
+                "--print", "%(url)s",
+                "--print", "%(title)s",
+                "--no-playlist",
+                "--quiet",
+                "--socket-timeout", "6",
+                "--flat-playlist",
+                "--extractor-retries", "1",
+            ]
             if source == "bili" or "bilibili.com" in query or "b23.tv" in query:
                 cmd.append(query)
             else:
@@ -117,14 +104,18 @@ class MusicCommands(commands.GroupCog, name="music"):
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
             if stdout and stdout.strip():
-                return {"title": stdout.decode().strip()}
-            return {"title": query}
+                lines = stdout.decode().strip().split("\n")
+                if len(lines) >= 2:
+                    return {"url": lines[0].strip(), "title": lines[1].strip()}
+                elif len(lines) == 1:
+                    return {"url": lines[0].strip(), "title": query}
+            return None
         except asyncio.TimeoutError:
-            logger.warning(f"获取视频信息超时: {query}")
-            return {"title": query}
+            logger.warning(f"搜索超时: {query}")
+            return None
         except Exception as e:
-            logger.error(f"获取视频信息失败: {e}")
-            return {"title": query}
+            logger.error(f"搜索失败: {e}")
+            return None
 
     @app_commands.command(name="play", description="播放一首歌曲")
     @app_commands.choices(source=SEARCH_SOURCES)
@@ -145,13 +136,14 @@ class MusicCommands(commands.GroupCog, name="music"):
         else:
             actual_source = "ytsearch"
 
-        audio_url = await self.get_audio_url(query, actual_source)
-        if not audio_url:
+        # 一次搜索同时获取 URL 和标题，大幅提速
+        result = await self.search_track(query, actual_source)
+        if not result:
             await interaction.followup.send("未找到歌曲或获取音频失败")
             return
 
-        info = await self.get_video_info(query, actual_source)
-        title = info.get("title", query)
+        audio_url = result["url"]
+        title = result["title"]
 
         player = self.get_player(interaction.guild.id)
         vc = interaction.guild.voice_client
