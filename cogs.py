@@ -4,6 +4,7 @@ from discord.ext import commands
 from datetime import datetime
 from main import logger
 
+
 # ==================== 工具函数 ====================
 def can_target(actor, target):
     if actor == target:
@@ -56,7 +57,8 @@ class AdminCommands(commands.GroupCog, name="admin"):
     @app_commands.command(name="kick", description="踢出用户")
     @app_commands.default_permissions(administrator=True)
     async def kick(self, interaction, member: discord.Member, reason: str = "无"):
-        if not await self.check_target(interaction, member): return
+        if not await self.check_target(interaction, member):
+            return
         try:
             await member.kick(reason=reason)
             await interaction.response.send_message(f"✅ 已踢出 {member.mention}", ephemeral=True)
@@ -67,7 +69,8 @@ class AdminCommands(commands.GroupCog, name="admin"):
     @app_commands.command(name="ban", description="封禁用户")
     @app_commands.default_permissions(administrator=True)
     async def ban(self, interaction, member: discord.Member, reason: str = "无"):
-        if not await self.check_target(interaction, member): return
+        if not await self.check_target(interaction, member):
+            return
         try:
             await member.ban(reason=reason)
             await interaction.response.send_message(f"✅ 已封禁 {member.mention}", ephemeral=True)
@@ -78,7 +81,8 @@ class AdminCommands(commands.GroupCog, name="admin"):
     @app_commands.command(name="timeout", description="禁言用户")
     @app_commands.default_permissions(administrator=True)
     async def timeout(self, interaction, member: discord.Member, minutes: int, reason: str = "无"):
-        if not await self.check_target(interaction, member): return
+        if not await self.check_target(interaction, member):
+            return
         minutes = max(1, min(minutes, 40320))
         try:
             await member.timeout(datetime.now() + datetime.timedelta(minutes=minutes), reason=reason)
@@ -120,7 +124,7 @@ class InfoCommands(commands.GroupCog, name="info"):
         embed.add_field(name="🔢 计数器", value="`/counter add` `/counter update` `/counter remove`", inline=False)
         embed.add_field(name="📋 日志", value="`/log set_message` `/log set_voice` `/log set_mod` `/log set_welcome`", inline=False)
         embed.add_field(name="🔧 管理", value="`/admin kick` `/admin ban` `/admin clear`", inline=False)
-        embed.add_field(name="🎵 音乐", value="`/music play` `/music skip` `/music stop` `/music queue` `/music pause` `/music resume` `/music loop` `/music volume`", inline=False)
+        embed.add_field(name="🔔 升级频道", value="`/level set-levelup-channel` 设置升级公告频道", inline=False)
         await interaction.response.send_message(embed=embed)
 
 
@@ -145,12 +149,19 @@ class LevelCommands(commands.GroupCog, name="level"):
             await interaction.followup.send(file=discord.File(buf, "rank.png"))
         except Exception as e:
             logger.error(f"等级卡片失败: {e}")
-            embed = discord.Embed(title=f"📊 {member.display_name}", description=f"等级：{data['level']}\nXP：{data['xp']}/{needed}\n排名：#{pos}", color=discord.Color.blue())
+            embed = discord.Embed(
+                title=f"📊 {member.display_name}",
+                description=f"等级：{data['level']}\nXP：{data['xp']}/{needed}\n排名：#{pos}",
+                color=discord.Color.blue()
+            )
             embed.set_thumbnail(url=member.display_avatar.url)
             await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="leaderboard", description="查看排行榜")
-    @app_commands.choices(mode=[app_commands.Choice(name="打字 XP", value="xp"), app_commands.Choice(name="语音 VP", value="voice")])
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="打字 XP", value="xp"),
+        app_commands.Choice(name="语音 VP", value="voice")
+    ])
     async def leaderboard(self, interaction, mode: str = "xp"):
         await interaction.response.defer()
         from database import db_get_leaderboard, xp_needed
@@ -170,7 +181,14 @@ class LevelCommands(commands.GroupCog, name="level"):
                     member = await self.bot.fetch_user(int(row["user_id"]))
                 except:
                     continue
-            users.append({"member": member, "name": member.display_name, "level": row["level"], "xp": row["xp"], "voice_xp": row["voice_xp"], "needed_xp": xp_needed(row["level"])})
+            users.append({
+                "member": member,
+                "name": member.display_name,
+                "level": row["level"],
+                "xp": row["xp"],
+                "voice_xp": row["voice_xp"],
+                "needed_xp": xp_needed(row["level"])
+            })
 
         if not users:
             await interaction.followup.send("📊 暂无数据")
@@ -185,19 +203,60 @@ class LevelCommands(commands.GroupCog, name="level"):
             for i, u in enumerate(users, 1):
                 m = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
                 val = u["xp"] if mode == "xp" else u["voice_xp"]
-                desc += f"{m} **{u['name']}** — Lv.{u['level']} ({val} {'XP' if mode=='xp' else 'VP'})\n"
+                desc += f"{m} **{u['name']}** — Lv.{u['level']} ({val} {'XP' if mode == 'xp' else 'VP'})\n"
             await interaction.followup.send(embed=discord.Embed(title="🏆 排行榜", description=desc, color=discord.Color.gold()))
+
+    # ==================== 新增：设置升级公告频道 ====================
+    @app_commands.command(name="set-levelup-channel", description="设置升级公告发送的频道")
+    @app_commands.describe(channel="升级公告发送到哪个频道（不选则关闭）")
+    @app_commands.default_permissions(administrator=True)
+    async def set_levelup_channel(self, interaction, channel: discord.TextChannel = None):
+        """设置升级公告频道"""
+        if not await check_privileged(self, interaction):
+            return
+
+        from database import get_conn, release_conn
+
+        gid = str(interaction.guild_id)
+        cid = str(channel.id) if channel else None
+
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO guild_settings (guild_id, levelup_channel_id) VALUES (%s, %s) "
+            "ON CONFLICT (guild_id) DO UPDATE SET levelup_channel_id = %s",
+            (gid, cid, cid)
+        )
+        conn.commit()
+        cur.close()
+        release_conn(conn)
+
+        if channel:
+            embed = discord.Embed(
+                title="✅ 升级公告频道已设置",
+                description=f"升级消息将发送到 {channel.mention}\n消息将**永久保留**，不会被自动删除",
+                color=discord.Color.green()
+            )
+        else:
+            embed = discord.Embed(
+                title="🔕 升级公告已关闭",
+                description="升级消息将发送到用户当前所在的频道",
+                color=discord.Color.orange()
+            )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="add_role", description="设置等级奖励角色")
     async def add_role(self, interaction, level: int, role: discord.Role):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_set_level_role
         db_set_level_role(interaction.guild.id, level, role.id)
         await interaction.response.send_message(f"✅ 等级 {level} → {role.mention}", ephemeral=True)
 
     @app_commands.command(name="set_xp", description="设置经验倍率")
     async def set_xp(self, interaction, rate: float):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_update_guild_setting
         rate = max(0.1, min(rate, 10.0))
         db_update_guild_setting(interaction.guild.id, "xp_rate", rate)
@@ -205,7 +264,8 @@ class LevelCommands(commands.GroupCog, name="level"):
 
     @app_commands.command(name="set_level", description="设置指定用户的等级")
     async def set_level(self, interaction: Interaction, member: discord.Member, level: int):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_update_user, xp_needed
         level = max(1, level)
         xp = xp_needed(level) - 1
@@ -215,7 +275,8 @@ class LevelCommands(commands.GroupCog, name="level"):
 
     @app_commands.command(name="set_xp_user", description="设置指定用户的 XP")
     async def set_xp_user(self, interaction: Interaction, member: discord.Member, xp: int):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_get_user, db_update_user, process_level_up
         data = db_get_user(interaction.guild.id, member.id)
         data["xp"] = xp
@@ -228,7 +289,8 @@ class LevelCommands(commands.GroupCog, name="level"):
 
     @app_commands.command(name="recover_from_roles", description="根据等级身份组恢复数据")
     async def recover_from_roles(self, interaction: Interaction):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         await interaction.response.defer(ephemeral=True)
 
         from database import db_update_user, xp_needed, get_conn, release_conn
@@ -296,14 +358,16 @@ class ReactionCommands(commands.GroupCog, name="reaction"):
 
     @app_commands.command(name="add", description="添加反应角色")
     async def add(self, interaction, message_id: str, emoji: str, role: discord.Role):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_set_reaction_role
         db_set_reaction_role(interaction.guild.id, message_id, emoji, role.id)
         await interaction.response.send_message(f"✅ {emoji} → {role.mention}", ephemeral=True)
 
     @app_commands.command(name="remove", description="移除反应角色")
     async def remove(self, interaction, message_id: str, emoji: str):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_delete_reaction_role
         db_delete_reaction_role(interaction.guild.id, message_id, emoji)
         await interaction.response.send_message("✅ 已移除", ephemeral=True)
@@ -317,6 +381,7 @@ COUNTER_CHOICES = [
     app_commands.Choice(name="📝 消息总数", value="messages"),
 ]
 
+
 class CounterCommands(commands.GroupCog, name="counter"):
     def __init__(self, bot):
         self.bot = bot
@@ -324,7 +389,8 @@ class CounterCommands(commands.GroupCog, name="counter"):
     @app_commands.command(name="add", description="添加计数器")
     @app_commands.choices(counter_type=COUNTER_CHOICES)
     async def add(self, interaction, counter_type: app_commands.Choice[str], channel: discord.TextChannel, message_template: str):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_set_counter
         db_set_counter(interaction.guild.id, counter_type.value, channel.id, message_template)
         await interaction.response.send_message(f"✅ {counter_type.name} → {channel.mention}", ephemeral=True)
@@ -332,7 +398,8 @@ class CounterCommands(commands.GroupCog, name="counter"):
     @app_commands.command(name="update", description="手动更新计数器")
     @app_commands.choices(counter_type=COUNTER_CHOICES)
     async def update(self, interaction, counter_type: app_commands.Choice[str], value: int):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_update_counter_value, db_get_counter
         db_update_counter_value(interaction.guild.id, counter_type.value, value)
         row = db_get_counter(interaction.guild.id, counter_type.value)
@@ -353,7 +420,8 @@ class CounterCommands(commands.GroupCog, name="counter"):
     @app_commands.command(name="remove", description="移除计数器")
     @app_commands.choices(counter_type=COUNTER_CHOICES)
     async def remove(self, interaction, counter_type: app_commands.Choice[str]):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_delete_counter
         db_delete_counter(interaction.guild.id, counter_type.value)
         await interaction.response.send_message(f"✅ {counter_type.name} 已移除", ephemeral=True)
@@ -366,28 +434,32 @@ class LogCommands(commands.GroupCog, name="log"):
 
     @app_commands.command(name="set_message", description="设置消息日志频道")
     async def set_message(self, interaction, channel: discord.TextChannel):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_set_log_channel
         db_set_log_channel(interaction.guild.id, "message_log_channel", channel.id)
         await interaction.response.send_message(f"✅ 消息日志 → {channel.mention}", ephemeral=True)
 
     @app_commands.command(name="set_voice", description="设置语音日志频道")
     async def set_voice(self, interaction, channel: discord.TextChannel):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_set_log_channel
         db_set_log_channel(interaction.guild.id, "voice_log_channel", channel.id)
         await interaction.response.send_message(f"✅ 语音日志 → {channel.mention}", ephemeral=True)
 
     @app_commands.command(name="set_mod", description="设置管理日志频道")
     async def set_mod(self, interaction, channel: discord.TextChannel):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_set_log_channel
         db_set_log_channel(interaction.guild.id, "mod_log_channel", channel.id)
         await interaction.response.send_message(f"✅ 管理日志 → {channel.mention}", ephemeral=True)
 
     @app_commands.command(name="set_welcome", description="设置欢迎/告别频道")
     async def set_welcome(self, interaction, channel: discord.TextChannel):
-        if not await check_privileged(self, interaction): return
+        if not await check_privileged(self, interaction):
+            return
         from database import db_set_welcome_channel
         db_set_welcome_channel(interaction.guild.id, channel.id)
         await interaction.response.send_message(f"✅ 欢迎/告别 → {channel.mention}", ephemeral=True)
@@ -395,6 +467,13 @@ class LogCommands(commands.GroupCog, name="log"):
 
 # ==================== 注册所有Cog ====================
 async def setup(bot):
-    cogs = [AdminCommands(bot), InfoCommands(bot), LevelCommands(bot), ReactionCommands(bot), CounterCommands(bot), LogCommands(bot)]
+    cogs = [
+        AdminCommands(bot),
+        InfoCommands(bot),
+        LevelCommands(bot),
+        ReactionCommands(bot),
+        CounterCommands(bot),
+        LogCommands(bot)
+    ]
     for cog in cogs:
         await bot.add_cog(cog)
