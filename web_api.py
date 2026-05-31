@@ -137,3 +137,132 @@ async def api_settings(guild_id):
 @app.route("/api/health")
 async def api_health():
     return jsonify({"success": True, "status": "running"})
+
+# ==================== 新增：Discord 消息发送 ====================
+
+@app.route("/api/guilds/<guild_id>/channels", methods=["GET"])
+async def api_guild_channels(guild_id):
+    """获取服务器的文字频道列表"""
+    if not hasattr(current_app, "bot"):
+        return jsonify({"success": False, "error": "Bot 未连接"}), 503
+
+    try:
+        guild = current_app.bot.get_guild(int(guild_id))
+        if not guild:
+            return jsonify({"success": False, "error": "未找到该服务器"}), 404
+
+        channels = []
+        for ch in guild.text_channels:
+            # 检查机器人是否有发送权限
+            perms = ch.permissions_for(guild.me)
+            if perms.send_messages and perms.read_messages:
+                channels.append({
+                    "id": str(ch.id),
+                    "name": ch.name,
+                    "category": ch.category.name if ch.category else None,
+                    "topic": ch.topic[:100] if ch.topic else None,
+                    "position": ch.position
+                })
+
+        # 按位置排序
+        channels.sort(key=lambda c: c["position"])
+        return jsonify({"success": True, "data": channels})
+    except Exception as e:
+        logger.error(f"获取频道列表失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/send-message", methods=["POST"])
+async def api_send_message():
+    """通过机器人向指定频道发送消息"""
+    if not hasattr(current_app, "bot"):
+        return jsonify({"success": False, "error": "Bot 未连接"}), 503
+
+    try:
+        data = await request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "请求体为空"}), 400
+
+        channel_id = data.get("channel_id")
+        content = data.get("content")
+        embed_data = data.get("embed")
+
+        if not channel_id or not content:
+            return jsonify({"success": False, "error": "缺少 channel_id 或 content"}), 400
+
+        if len(content) > 2000:
+            return jsonify({"success": False, "error": "消息内容超过 2000 字符限制"}), 400
+
+        channel = current_app.bot.get_channel(int(channel_id))
+        if not channel:
+            return jsonify({"success": False, "error": "未找到该频道"}), 404
+
+        # 检查权限
+        perms = channel.permissions_for(channel.guild.me)
+        if not perms.send_messages:
+            return jsonify({"success": False, "error": "机器人无发送权限"}), 403
+
+        # 构建 embed
+        embed = None
+        if embed_data and embed_data.get("enabled"):
+            embed = discord.Embed(
+                title=embed_data.get("title") or None,
+                description=embed_data.get("description") or None,
+                color=int(embed_data.get("color", "0x00b4d8").replace("0x", ""), 16)
+            )
+            if embed_data.get("footer"):
+                embed.set_footer(text=embed_data["footer"])
+            if embed_data.get("thumbnail_url"):
+                embed.set_thumbnail(url=embed_data["thumbnail_url"])
+
+        # 发送消息
+        sent = await channel.send(content=content, embed=embed)
+
+        return jsonify({
+            "success": True,
+            "message": "消息已发送",
+            "data": {
+                "message_id": str(sent.id),
+                "channel_id": str(channel_id),
+                "channel_name": channel.name,
+                "guild_name": channel.guild.name
+            }
+        })
+    except discord.Forbidden:
+        return jsonify({"success": False, "error": "机器人权限不足"}), 403
+    except Exception as e:
+        logger.error(f"发送消息失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/guilds/<guild_id>/preview", methods=["GET"])
+async def api_guild_preview(guild_id):
+    """获取服务器的基本信息预览"""
+    if not hasattr(current_app, "bot"):
+        return jsonify({"success": False, "error": "Bot 未连接"}), 503
+
+    try:
+        guild = current_app.bot.get_guild(int(guild_id))
+        if not guild:
+            return jsonify({"success": False, "error": "未找到该服务器"}), 404
+
+        # 在线人数
+        online = sum(1 for m in guild.members if m.status != discord.Status.offline)
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "name": guild.name,
+                "id": str(guild.id),
+                "member_count": guild.member_count,
+                "online_count": online,
+                "text_channels": len(guild.text_channels),
+                "voice_channels": len(guild.voice_channels),
+                "roles_count": len(guild.roles),
+                "created_at": guild.created_at.isoformat(),
+                "icon_url": str(guild.icon.url) if guild.icon else None
+            }
+        })
+    except Exception as e:
+        logger.error(f"获取服务器预览失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
