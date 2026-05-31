@@ -20,7 +20,7 @@ app = cors(app,
 
 # ==================== 密码验证系统 ====================
 
-PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "fbxwcnm")
+PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
 _valid_tokens = {}
 
 def generate_token():
