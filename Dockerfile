@@ -3,6 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 安装系统依赖
+# 修改后的 RUN apt-get update 段落：
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -13,10 +14,8 @@ RUN apt-get update && apt-get install -y \
     tzdata \
     gcc \
     libpq-dev \
-    ffmpeg \
     curl \
     openssh-client \
-    libsodium23 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' \
