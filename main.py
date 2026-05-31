@@ -95,9 +95,29 @@ async def load_modules():
     bot.loop.create_task(tsk.start_counter_updater(bot))
     logger.info("所有模块加载完成")
 
+# 修改 main.py 底部的启动部分
+
 @bot.event
 async def setup_hook():
     await load_modules()
+    
+    # 将 bot 挂载到 quart 的 app 上，实现完全的资源共享
+    from web_api import app as quart_app
+    quart_app.bot = bot
+    
+    # 完美融入 discord.py 的 asyncio 事件循环中，拒绝多线程卡死
+    import uvicorn
+    config = uvicorn.Config(quart_app, host="0.0.0.0", port=8080, log_level="warning")
+    server = uvicorn.Server(config)
+    bot.loop.create_task(server.serve())
+    logger.info("Web API (Quart) 已成功并入主 asyncio 事件循环 (port 8080)")
+
+if __name__ == "__main__":
+    from database import init_db
+    init_db()
+    
+    # 移除原先的 threading.Thread(target=start_flask) 全套代码
+    bot.run(TOKEN)
 
 # ==================== 启动 ====================
 if __name__ == "__main__":
