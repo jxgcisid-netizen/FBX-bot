@@ -11,7 +11,11 @@ import logging
 logger = logging.getLogger("WebAPI")
 
 app = Quart(__name__)
-app = cors(app, allow_origin="*")
+app = cors(app, 
+    allow_origin="*",
+    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
 
 # ==================== 密码验证系统 ====================
 
@@ -45,6 +49,10 @@ async def check_auth():
     if request.path in public_paths:
         return
 
+    # 处理 OPTIONS 预检请求
+    if request.method == "OPTIONS":
+        return
+
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return jsonify({"success": False, "error": "未授权，请先登录"}), 401
@@ -72,9 +80,13 @@ def get_guild_name_from_bot(guild_id: str) -> str:
 
 # ==================== 认证相关接口 ====================
 
-@app.route("/api/auth", methods=["POST"])
+@app.route("/api/auth", methods=["POST", "OPTIONS"])
 async def api_auth():
     """验证密码并返回 token"""
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     try:
         data = await request.get_json()
         if not data or "password" not in data:
@@ -97,9 +109,13 @@ async def api_auth():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route("/api/verify-token", methods=["GET"])
+@app.route("/api/verify-token", methods=["GET", "OPTIONS"])
 async def api_verify_token():
     """验证 token 是否有效"""
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     try:
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
@@ -120,8 +136,12 @@ async def api_verify_token():
 
 # ==================== 仪表盘 ====================
 
-@app.route("/api/stats")
+@app.route("/api/stats", methods=["GET", "OPTIONS"])
 async def api_stats():
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     try:
         conn = get_conn()
         cur = conn.cursor()
@@ -152,8 +172,12 @@ async def api_stats():
 
 # ==================== 服务器列表 ====================
 
-@app.route("/api/guilds")
+@app.route("/api/guilds", methods=["GET", "OPTIONS"])
 async def api_guilds():
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     try:
         conn = get_conn()
         cur = conn.cursor()
@@ -182,8 +206,12 @@ async def api_guilds():
 
 # ==================== 排行榜 ====================
 
-@app.route("/api/leaderboard/<guild_id>")
+@app.route("/api/leaderboard/<guild_id>", methods=["GET", "OPTIONS"])
 async def api_leaderboard(guild_id):
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     try:
         conn = get_conn()
         cur = conn.cursor()
@@ -222,9 +250,13 @@ async def api_leaderboard(guild_id):
 
 # ==================== 服务器预览 ====================
 
-@app.route("/api/guilds/<guild_id>/preview")
+@app.route("/api/guilds/<guild_id>/preview", methods=["GET", "OPTIONS"])
 async def api_guild_preview(guild_id):
     """获取服务器的基本信息预览"""
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     if not hasattr(current_app, "bot"):
         return jsonify({"success": False, "error": "Bot 未连接"}), 503
 
@@ -258,9 +290,13 @@ async def api_guild_preview(guild_id):
 
 # ==================== 获取频道列表 ====================
 
-@app.route("/api/guilds/<guild_id>/channels")
+@app.route("/api/guilds/<guild_id>/channels", methods=["GET", "OPTIONS"])
 async def api_guild_channels(guild_id):
     """获取服务器的文字频道列表"""
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     if not hasattr(current_app, "bot"):
         return jsonify({"success": False, "error": "Bot 未连接"}), 503
 
@@ -292,9 +328,13 @@ async def api_guild_channels(guild_id):
 
 # ==================== 发送消息 ====================
 
-@app.route("/api/send-message", methods=["POST"])
+@app.route("/api/send-message", methods=["POST", "OPTIONS"])
 async def api_send_message():
     """通过机器人向指定频道发送消息"""
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     if not hasattr(current_app, "bot"):
         return jsonify({"success": False, "error": "Bot 未连接"}), 503
 
@@ -380,8 +420,12 @@ async def api_send_message():
 
 # ==================== 服务器设置 ====================
 
-@app.route("/api/settings/<guild_id>", methods=["GET", "POST"])
+@app.route("/api/settings/<guild_id>", methods=["GET", "POST", "OPTIONS"])
 async def api_settings(guild_id):
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     if request.method == "GET":
         try:
             settings = db_get_guild_settings(guild_id)
@@ -422,8 +466,12 @@ async def api_settings(guild_id):
 
 # ==================== 健康检查 ====================
 
-@app.route("/api/health")
+@app.route("/api/health", methods=["GET", "OPTIONS"])
 async def api_health():
+    # 处理 CORS 预检请求
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
     bot_connected = False
     if hasattr(current_app, "bot") and current_app.bot:
         bot_connected = current_app.bot.is_ready()
