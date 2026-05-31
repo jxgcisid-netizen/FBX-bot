@@ -16,7 +16,7 @@ app = cors(app, allow_origin="*")
 # ==================== 密码验证系统 ====================
 
 # 控制面板密码（从环境变量读取，默认值仅用于开发）
-PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "fbxsb")
+PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
 
 # 存储有效 token（简单内存实现，生产环境建议用 Redis）
 _valid_tokens = {}  # {token: expire_timestamp}
