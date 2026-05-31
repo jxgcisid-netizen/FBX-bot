@@ -88,11 +88,10 @@ async def on_ready():
 async def load_modules():
     import events as ev
     import cogs as cog
-    import music as mus
     import tasks as tsk
     await ev.setup(bot)
     await cog.setup(bot)
-    await mus.setup(bot)
+    # 删除了 import mus 和 await mus.setup(bot)
     bot.loop.create_task(tsk.start_counter_updater(bot))
     logger.info("所有模块加载完成")
 
