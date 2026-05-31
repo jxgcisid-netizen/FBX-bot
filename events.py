@@ -46,12 +46,25 @@ async def setup(bot):
                         await message.author.add_roles(role)
                     except discord.Forbidden:
                         pass
-            embed = discord.Embed(
-                title="🎉 等级提升！",
-                description=f"{message.author.mention} → **{user_data['level']}级**！",
-                color=discord.Color.gold()
-            )
-            await message.channel.send(embed=embed, delete_after=10)
+            conn = db_conn()
+cur = conn.cursor()
+cur.execute("SELECT levelup_channel_id FROM guild_settings WHERE guild_id = %s", (gid,))
+row = cur.fetchone()
+cur.close()
+db_release(conn)
+
+target_ch = message.channel
+if row and row[0]:
+    ch = message.guild.get_channel(int(row[0]))
+    if ch:
+        target_ch = ch
+
+embed = discord.Embed(
+    title="🎉 等级提升！",
+    description=f"{message.author.mention} → **{user_data['level']}级**！",
+    color=discord.Color.gold()
+)
+await target_ch.send(embed=embed)  # 不删除
 
         db_update_user(gid, uid, user_data)
         await bot.process_commands(message)
