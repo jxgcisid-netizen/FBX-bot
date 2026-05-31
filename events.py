@@ -3,6 +3,7 @@ import random
 import discord
 from datetime import datetime
 from main import logger
+from database import get_conn as db_conn, release_conn as db_release
 
 _xp_cooldown = {}
 _voice_tracker = {}
