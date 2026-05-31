@@ -1,7 +1,6 @@
 import os
 import logging
 import platform
-import threading
 import discord
 from discord.ext import commands
 from PIL import ImageFont
@@ -35,7 +34,7 @@ elif system == "Linux":
     FONT_BOLD = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
     FONT_REGULAR = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
-# ==================== 颜色 ====================
+# ==================== 颜色常量 ====================
 TEAL = (65, 183, 183)
 TEAL_DARK = (45, 130, 130)
 TEAL_DIM = (45, 100, 100)
@@ -62,11 +61,11 @@ def get_font(size, bold=True):
             font = ImageFont.truetype(font_path, size)
             _font_cache[cache_key] = font
             return font
-    except:
+    except Exception:
         pass
     return ImageFont.load_default()
 
-# ==================== Bot初始化 ====================
+# ==================== Bot 初始化 ====================
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -75,6 +74,7 @@ intents.guilds = True
 intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
 
 @bot.event
 async def on_ready():
@@ -85,52 +85,35 @@ async def on_ready():
     except Exception as e:
         logger.error(f"同步命令失败: {e}")
 
+
 async def load_modules():
     import events as ev
     import cogs as cog
     import tasks as tsk
     await ev.setup(bot)
     await cog.setup(bot)
-    # 删除了 import mus 和 await mus.setup(bot)
     bot.loop.create_task(tsk.start_counter_updater(bot))
     logger.info("所有模块加载完成")
 
-# 修改 main.py 底部的启动部分
 
 @bot.event
 async def setup_hook():
     await load_modules()
-    
-    # 将 bot 挂载到 quart 的 app 上，实现完全的资源共享
+
+    # 将 bot 挂载到 Quart app 上，实现资源共享
     from web_api import app as quart_app
     quart_app.bot = bot
-    
-    # 完美融入 discord.py 的 asyncio 事件循环中，拒绝多线程卡死
+
+    # 融入 discord.py 的 asyncio 事件循环
     import uvicorn
     config = uvicorn.Config(quart_app, host="0.0.0.0", port=8080, log_level="warning")
     server = uvicorn.Server(config)
     bot.loop.create_task(server.serve())
-    logger.info("Web API (Quart) 已成功并入主 asyncio 事件循环 (port 8080)")
+    logger.info("Web API (Quart) 已并入主 asyncio 事件循环 (port 8080)")
 
+
+# ==================== 启动入口 ====================
 if __name__ == "__main__":
     from database import init_db
     init_db()
-    
-    # 移除原先的 threading.Thread(target=start_flask) 全套代码
-    bot.run(TOKEN)
-
-# ==================== 启动 ====================
-if __name__ == "__main__":
-    from database import init_db
-    init_db()
-
-    from web_api import app as flask_app
-
-    def start_flask():
-        flask_app.run(host="0.0.0.0", port=8080, debug=False, use_reloader=False)
-
-    flask_thread = threading.Thread(target=start_flask, daemon=True)
-    flask_thread.start()
-    logger.info("Web API 已启动 (port 8080)")
-
     bot.run(TOKEN)
