@@ -243,6 +243,8 @@ async def create_rank_card(member, level, xp, needed_xp, rank):
     buf.seek(0)
     return buf
 async def create_leaderboard_card(guild, top_users, mode="xp"):
+    import asyncio
+    
     row_h, av_w, img_w, header = 90, 82, 740, 70
     img_h = header + row_h * len(top_users) + 20
     bg = (26, 29, 36)
@@ -251,6 +253,7 @@ async def create_leaderboard_card(guild, top_users, mode="xp"):
     img = Image.new("RGBA", (img_w, img_h), bg)
     draw = ImageDraw.Draw(img)
 
+    # 绘制背景装饰线
     for i in range(-img_h, img_w + img_h, 28):
         draw.line([(i, 0), (i + img_h, img_h)], fill=(30, 33, 41), width=1)
 
@@ -267,6 +270,22 @@ async def create_leaderboard_card(guild, top_users, mode="xp"):
     draw.text((130, header - 20), "用户", fill=(150, 155, 160), font=font_header)
     draw.text((img_w - 180, header - 20), "等级", fill=(150, 155, 160), font=font_header)
     draw.text((img_w - 100, header - 20), "经验", fill=(150, 155, 160), font=font_header)
+
+    # ==================== 【核心优化】并发预下载所有头像 ====================
+    avatar_tasks = []
+    for user in top_users:
+        member = user.get("member")
+        if member:
+            avatar_tasks.append(fetch_avatar(member, size=128))
+        else:
+            # 放入一个返回 None 的 Future 对象占位，保持索引对齐
+            fake_task = asyncio.Future()
+            fake_task.set_result(None)
+            avatar_tasks.append(fake_task)
+            
+    # 并发执行网络请求
+    avatars = await asyncio.gather(*avatar_tasks)
+    # =======================================================================
 
     for i, user in enumerate(top_users):
         rank = i + 1
@@ -289,24 +308,25 @@ async def create_leaderboard_card(guild, top_users, mode="xp"):
         draw.rounded_rectangle([7, y_top + 7, 7 + av_w - 6, y_top + row_h - 7], radius=9, outline=border_col, width=2)
 
         member = user.get("member")
-        if member:
-            av_img = await fetch_avatar(member, size=128)
-            if av_img:
-                av_size = av_w - 16
-                av = av_img.resize((av_size, av_size), Image.Resampling.LANCZOS)
-                mask = Image.new("L", (av_size, av_size), 0)
-                ImageDraw.Draw(mask).rounded_rectangle([0, 0, av_size, av_size], radius=6, fill=255)
-                av_circle = Image.new("RGBA", (av_size, av_size))
-                av_circle.paste(av, (0, 0), av)
-                av_circle.putalpha(mask)
-                img.paste(av_circle, (12, y_top + 12), av_circle)
-            else:
-                font_letter = get_font(24, True)
-                letter = member.display_name[0].upper()
-                lb = font_letter.getbbox(letter)
-                lw2, lh = lb[2] - lb[0], lb[3] - lb[1]
-                draw.text((8 + (av_w - 8) // 2 - lw2 // 2, y_top + row_h // 2 - lh // 2), letter,
-                          fill=rank_col if rank <= 3 else (150, 160, 175), font=font_letter)
+        av_img = avatars[i]  # 直接从并发缓存中获取结果，不再产生串行等待
+        
+        if member and av_img:
+            av_size = av_w - 16
+            av = av_img.resize((av_size, av_size), Image.Resampling.LANCZOS)
+            mask = Image.new("L", (av_size, av_size), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, av_size, av_size], radius=6, fill=255)
+            av_circle = Image.new("RGBA", (av_size, av_size))
+            av_circle.paste(av, (0, 0), av)
+            av_circle.putalpha(mask)
+            img.paste(av_circle, (12, y_top + 12), av_circle)
+        else:
+            font_letter = get_font(24, True)
+            display_name = member.display_name if member else (user.get("name") or "???")
+            letter = display_name[0].upper()
+            lb = font_letter.getbbox(letter)
+            lw2, lh = lb[2] - lb[0], lb[3] - lb[1]
+            draw.text((8 + (av_w - 8) // 2 - lw2 // 2, y_top + row_h // 2 - lh // 2), letter,
+                      fill=rank_col if rank <= 3 else (150, 160, 175), font=font_letter)
 
         text_x = 8 + av_w + 4
         text_y = y_top + 18
