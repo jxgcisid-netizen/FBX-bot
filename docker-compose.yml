@@ -12,9 +12,10 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+    # 修改后的 docker-compose.yml 关键部分
     healthcheck:
-      test: ["CMD", "python", "-c", "import sqlite3; conn = sqlite3.connect('/app/data/bot_data.db'); conn.close()"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
