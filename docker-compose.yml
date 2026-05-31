@@ -7,15 +7,16 @@ services:
     restart: unless-stopped
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - DB_PATH=/app/data/bot_data.db
+      - DATABASE_URL=${DATABASE_URL}          # 添加 PostgreSQL 连接字符串
+      - GITHUB_TOKEN=${GITHUB_TOKEN}          # 备份用 GitHub Token
+      - GITHUB_BACKUP_REPO=${GITHUB_BACKUP_REPO}  # 备份仓库
       - TZ=Asia/Shanghai
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-    # 修改后的 docker-compose.yml 关键部分
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 40s   # 延长启动等待时间
