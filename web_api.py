@@ -332,28 +332,50 @@ async def api_send_message():
         return jsonify({}), 200
     if not hasattr(current_app, "bot"):
         return jsonify({"success": False, "error": "Bot 未连接"}), 503
+
     try:
-        data = await request.get_json()
-        if not data:
-            return jsonify({"success": False, "error": "请求体为空"}), 400
-        channel_id = data.get("channel_id")
-        content = data.get("content")
-        embed_data = data.get("embed")
+        # 判断是 JSON 还是 FormData
+        content_type = request.headers.get("Content-Type", "")
+
+        if "application/json" in content_type:
+            # JSON 模式
+            data = await request.get_json()
+            channel_id = data.get("channel_id")
+            content = data.get("content", "")
+            embed_data = data.get("embed")
+        else:
+            # FormData 模式
+            form = await request.form
+            channel_id = form.get("channel_id")
+            content = form.get("content", "")
+            embed_data = {
+                "enabled": form.get("embed_enabled") == "true",
+                "title": form.get("embed_title"),
+                "description": form.get("embed_description"),
+                "color": form.get("embed_color"),
+                "footer": form.get("embed_footer"),
+                "thumbnail_url": form.get("embed_thumbnail")
+            }
+            # 处理文件
+            files = (await request.files).getlist("files")
+
         if not channel_id:
             return jsonify({"success": False, "error": "缺少 channel_id"}), 400
-        if not content:
+        if not content and (content_type == "application/json" or not files):
             return jsonify({"success": False, "error": "缺少 content"}), 400
-        if len(content) > 2000:
-            return jsonify({"success": False, "error": "消息内容超过 2000 字符限制"}), 400
+
         channel = current_app.bot.get_channel(int(channel_id))
         if not channel:
             return jsonify({"success": False, "error": "未找到该频道"}), 404
+
         perms = channel.permissions_for(channel.guild.me)
         if not perms.send_messages:
             return jsonify({"success": False, "error": "机器人无发送消息权限"}), 403
+
+        # 构建 embed
         embed = None
         if embed_data and embed_data.get("enabled"):
-            color_str = embed_data.get("color", "0x00b4d8").replace("#", "0x")
+            color_str = (embed_data.get("color") or "0x00b4d8").replace("#", "0x")
             try:
                 color = int(color_str, 16)
             except ValueError:
@@ -368,13 +390,14 @@ async def api_send_message():
             if embed_data.get("thumbnail_url"):
                 try:
                     embed.set_thumbnail(url=embed_data["thumbnail_url"])
-                except Exception:
+                except:
                     pass
+
+        # 发送消息
         sent = await channel.send(content=content, embed=embed)
         logger.info(f"面板发送消息: #{channel.name} in {channel.guild.name}")
         return jsonify({
             "success": True,
-            "message": "消息已发送",
             "data": {
                 "message_id": str(sent.id),
                 "channel_id": str(channel_id),
@@ -384,9 +407,6 @@ async def api_send_message():
         })
     except discord.Forbidden:
         return jsonify({"success": False, "error": "机器人权限不足"}), 403
-    except discord.HTTPException as e:
-        logger.error(f"Discord HTTP 错误: {e}")
-        return jsonify({"success": False, "error": f"Discord API 错误: {str(e)}"}), 500
     except Exception as e:
         logger.error(f"发送消息失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
