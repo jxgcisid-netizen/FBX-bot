@@ -61,7 +61,7 @@ async def setup(bot):
                 if ch:
                     target_ch = ch
 
-                        embed = discord.Embed(
+            embed = discord.Embed(
                 title="🎉 等级提升！",
                 description=f"{message.author.mention} 通过发送消息升到了 **{user_data['level']}级**！",
                 color=discord.Color.gold()
@@ -137,7 +137,7 @@ async def setup(bot):
                             if ch:
                                 target_ch = ch
 
-                                                embed = discord.Embed(
+                        embed = discord.Embed(
                             title="🎙️ 语音等级提升！",
                             description=f"{member.mention} 通过语音通话升到了 **{data['level']}级**！",
                             color=discord.Color.blue()
