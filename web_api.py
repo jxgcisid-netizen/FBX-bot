@@ -1,525 +1,680 @@
-import os
-import asyncio
-import hashlib
-import secrets
-import time
-import discord
-from quart import Quart, jsonify, request, current_app
-from quart_cors import cors
-from database import get_conn, release_conn, db_get_guild_settings, db_update_guild_setting
-import logging
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FBX Bot - 控制面板</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
 
-logger = logging.getLogger("WebAPI")
+    <!-- 锁屏 -->
+    <div class="lockscreen" id="lockscreen">
+        <div class="lock-box">
+            <div class="lock-icon">🔐</div>
+            <div class="lock-title">FBX<span>Bot</span> 控制面板</div>
+            <div class="lock-subtitle">请输入访问密码</div>
+            <input type="password" class="lock-input" id="password-input"
+                   placeholder="••••••" autocomplete="current-password" maxlength="64"
+                   onkeydown="if(event.key==='Enter')Auth.unlock()">
+            <button class="lock-btn" id="lock-btn" onclick="Auth.unlock()">🔓 解锁</button>
+            <label class="lock-remember">
+                <input type="checkbox" id="remember-checkbox" checked>
+                记住我（下次自动登录）
+            </label>
+            <div class="lock-error" id="lock-error"></div>
+        </div>
+    </div>
 
-app = Quart(__name__)
-app = cors(app, 
-    allow_origin="*",
-    allow_headers=["Content-Type", "Authorization"],
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-)
+    <!-- 选择服务器弹窗 -->
+    <div class="lockscreen" id="guild-picker" style="display:none;">
+        <div class="lock-box" style="padding:36px 32px;text-align:left;">
+            <div style="font-size:18px;font-weight:700;margin-bottom:6px;">🌐 选择服务器</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:20px;">请选择要管理的 Discord 服务器</div>
+            <div id="guild-picker-list" style="max-height:300px;overflow-y:auto;"></div>
+        </div>
+    </div>
 
-# ==================== 密码验证系统 ====================
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="navbar-brand">FBX<span>Bot</span></div>
+        <div class="navbar-actions">
+            <div class="navbar-status">
+                <div class="status-dot" id="dot"></div>
+                <span id="status-text">连接中...</span>
+            </div>
+            <select id="global-guild-select" onchange="onGlobalGuildChange()"
+                style="background:var(--surface);border:1px solid var(--border);color:var(--cyan);padding:5px 10px;border-radius:var(--radius-xs);font-size:12px;max-width:200px;font-weight:600;">
+                <option value="">加载中...</option>
+            </select>
+            <button class="btn-icon danger" id="btn-toggle-bot" onclick="BotControl.toggle()">⏹ 停止</button>
+            <button class="btn-icon" onclick="Auth.lock()">🔒</button>
+        </div>
+    </nav>
 
-PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
-_valid_tokens = {}
+    <!-- 主内容 -->
+    <div class="container" id="main-content">
+        <div class="tabs">
+            <button class="tab active" onclick="UI.switchTab('dashboard')">📊 仪表盘</button>
+            <button class="tab" onclick="UI.switchTab('messenger')">💬 消息发送</button>
+            <button class="tab" onclick="UI.switchTab('settings')">⚙️ 设置</button>
+        </div>
 
-def generate_token():
-    return secrets.token_hex(32)
+        <!-- 仪表盘 -->
+        <div class="tab-content active" id="tab-dashboard">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="stat-label">📊 总用户</div><div class="stat-value" id="total-users">--</div></div>
+                <div class="stat-card"><div class="stat-label">🌐 服务器</div><div class="stat-value" id="total-guilds">--</div></div>
+                <div class="stat-card"><div class="stat-label">🏆 最高等级</div><div class="stat-value" id="max-level">--</div></div>
+                <div class="stat-card"><div class="stat-label">💚 Bot 状态</div><div class="stat-value" style="font-size:16px;" id="bot-status">在线</div></div>
+            </div>
+            <div class="content-grid">
+                <div class="panel">
+                    <div class="panel-header">服务器列表<span class="badge" id="guild-count">0</span></div>
+                    <div class="panel-body" id="guilds-panel"><div class="spinner"></div></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">排行榜</div>
+                    <div class="panel-body" id="lb-content">
+                        <div class="empty-state"><div class="icon">📋</div>选择服务器后自动加载</div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-def clean_expired_tokens():
-    now = time.time()
-    expired = [t for t, exp in _valid_tokens.items() if exp < now]
-    for t in expired:
-        del _valid_tokens[t]
+        <!-- 消息发送 -->
+        <div class="tab-content" id="tab-messenger">
+            <div class="content-grid single">
+                <div class="panel full">
+                    <div class="panel-header">
+                        💬 通过 Bot 发送消息
+                        <select id="msg-channel-select"
+                            style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-xs);font-size:11px;">
+                            <option value="">选择频道</option>
+                        </select>
+                    </div>
+                    <div class="panel-body">
+                        <div class="guild-preview" id="guild-preview" style="display:none;"></div>
+                        <div style="position:relative;">
+                            <textarea id="message-content"
+                                      placeholder="输入消息... @everyone @here"
+                                      maxlength="2000"
+                                      oninput="Messenger.onInput()"
+                                      onkeydown="Messenger.onKeydown(event)"></textarea>
+                            <div class="mention-suggestions" id="mention-suggestions"></div>
+                        </div>
+                        <div class="char-count" id="char-count">0 / 2000</div>
 
-# ==================== 全局认证中间件 ====================
+                        <div class="file-upload-area" id="file-upload-area">
+                            <div onclick="document.getElementById('file-input').click()" style="cursor:pointer;">
+                                📎 点击上传文件/图片（或拖拽到此处）<br><span style="font-size:10px;">最大 8MB</span>
+                            </div>
+                            <input type="file" id="file-input" multiple style="display:none;"
+                                   onchange="Messenger.handleFiles(this.files)"
+                                   accept="image/*,.png,.jpg,.gif,.webp,.txt,.pdf,.mp4,.mp3,.zip">
+                        </div>
+                        <div class="file-list" id="file-list"></div>
 
-@app.before_request
-async def check_auth():
-    public_paths = ["/api/auth", "/api/health", "/api/verify-token"]
-    if request.path in public_paths:
-        return
-    if request.method == "OPTIONS":
-        return
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return jsonify({"success": False, "error": "未授权，请先登录"}), 401
-    token = auth_header[7:]
-    clean_expired_tokens()
-    if token not in _valid_tokens:
-        return jsonify({"success": False, "error": "token 无效或已过期"}), 401
-    _valid_tokens[token] = time.time() + 86400
+                        <div class="toggle-row">
+                            <label class="toggle">
+                                <input type="checkbox" id="embed-enabled" onchange="Messenger.toggleEmbed()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span style="font-size:12px;color:var(--text-secondary);">附加 Embed</span>
+                        </div>
+                        <div class="embed-options" id="embed-options" style="display:none;">
+                            <div><label>标题</label><input type="text" id="embed-title" placeholder="Embed 标题" maxlength="256"></div>
+                            <div><label>颜色</label><input type="text" id="embed-color" placeholder="#00b4d8" value="#00b4d8" maxlength="7"></div>
+                            <div style="grid-column:1/-1;"><label>描述</label><input type="text" id="embed-description" placeholder="描述" maxlength="4096"></div>
+                            <div><label>页脚</label><input type="text" id="embed-footer" placeholder="页脚" maxlength="2048"></div>
+                            <div><label>缩略图 URL</label><input type="text" id="embed-thumbnail" placeholder="https://..."></div>
+                        </div>
 
-# ==================== 辅助函数 ====================
+                        <div style="display:flex;gap:8px;margin-top:14px;">
+                            <button class="btn btn-success" onclick="Messenger.send()" id="send-btn">📨 发送</button>
+                            <button class="btn btn-outline" onclick="Messenger.preview()">👁 预览</button>
+                        </div>
+                        <div class="message-preview" id="message-preview">
+                            <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;">预览</div>
+                            <div id="preview-content" style="font-size:13px;white-space:pre-wrap;"></div>
+                            <div class="preview-embed" id="preview-embed" style="display:none;">
+                                <div class="preview-embed-title" id="preview-embed-title"></div>
+                                <div class="preview-embed-desc" id="preview-embed-desc"></div>
+                                <div class="preview-embed-footer" id="preview-embed-footer"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-def get_guild_name_from_bot(guild_id: str) -> str:
-    if hasattr(current_app, "bot"):
-        guild = current_app.bot.get_guild(int(guild_id))
-        if guild:
-            return guild.name
-    return "未知服务器"
+        <!-- 设置 -->
+        <div class="tab-content" id="tab-settings">
+            <div class="content-grid single">
+                <div class="panel full">
+                    <div class="panel-header">⚙️ 服务器设置</div>
+                    <div class="panel-body" id="settings-panel">
+                        <div class="empty-state"><div class="icon">🔒</div>选择服务器后自动加载</div>
+                    </div>
+                </div>
+                <div class="panel full">
+                    <div class="panel-header">🛡️ 成员管理</div>
+                    <div class="panel-body" id="mod-panel">
+                        <div class="empty-state"><div class="icon">🛡️</div>选择服务器后自动加载</div>
+                    </div>
+                </div>
+                <div class="panel full">
+                    <div class="panel-header">⚠️ 危险区域</div>
+                    <div class="panel-body">
+                        <div class="danger-zone">
+                            <div class="danger-zone-title" id="danger-title">⏹ 停止 Bot</div>
+                            <p style="font-size:11px;color:var(--text-muted);margin-bottom:10px;" id="danger-desc">这将断开 Bot 与 Discord 的连接。</p>
+                            <button class="btn btn-danger btn-sm" id="danger-btn" onclick="BotControl.toggle()">停止 Bot</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
-# ==================== 认证接口 ====================
+    <div class="toast-container" id="toast-container"></div>
 
-@app.route("/api/auth", methods=["POST", "OPTIONS"])
-async def api_auth():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    try:
-        data = await request.get_json()
-        if not data or "password" not in data:
-            return jsonify({"success": False, "error": "缺少密码"}), 400
-        if data["password"] == PANEL_PASSWORD:
-            token = generate_token()
-            _valid_tokens[token] = time.time() + 86400
-            clean_expired_tokens()
-            logger.info("面板登录成功")
-            return jsonify({"success": True, "token": token})
-        else:
-            logger.warning("面板登录失败：密码错误")
-            return jsonify({"success": False, "error": "密码错误"}), 401
-    except Exception as e:
-        logger.error(f"Auth 错误: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+<script>
+// ====================================================================
+// 全局
+// ====================================================================
+const API = "https://web--arcane--d9n9n2zg4zh5.code.run";
+const SKEY = "fbxbot_auth_token";
+const RKEY = "fbxbot_remember";
 
-@app.route("/api/verify-token", methods=["GET", "OPTIONS"])
-async def api_verify_token():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    try:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return jsonify({"success": False, "error": "无效的 token"}), 401
-        token = auth_header[7:]
-        clean_expired_tokens()
-        if token in _valid_tokens:
-            _valid_tokens[token] = time.time() + 86400
-            return jsonify({"success": True})
-        else:
-            return jsonify({"success": False, "error": "token 已过期"}), 401
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+let guildList = [];
+let activeGuild = null;
+let botOnline = true;
 
-# ==================== 仪表盘 ====================
+async function api(url, opts = {}) {
+    const t = localStorage.getItem(SKEY);
+    const h = { ...(opts.headers || {}) };
+    if (t) h["Authorization"] = "Bearer " + t;
+    if (opts.body && typeof opts.body === "string" && !h["Content-Type"])
+        h["Content-Type"] = "application/json";
+    return fetch(url, { ...opts, headers: h });
+}
 
-@app.route("/api/stats", methods=["GET", "OPTIONS"])
-async def api_stats():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        user_count = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(DISTINCT guild_id) FROM users")
-        guild_count = cur.fetchone()[0]
-        cur.execute("SELECT MAX(level) FROM users")
-        max_level = cur.fetchone()[0] or 0
-        cur.close()
-        release_conn(conn)
-        active_guilds = len(current_app.bot.guilds) if hasattr(current_app, "bot") else guild_count
-        return jsonify({
-            "success": True,
-            "data": {
-                "total_users": user_count,
-                "total_guilds": active_guilds,
-                "max_level": max_level
-            }
-        })
-    except Exception as e:
-        logger.error(f"API stats 错误: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+function toast(msg, type) {
+    const c = document.getElementById("toast-container");
+    const d = document.createElement("div");
+    d.className = "toast " + type; d.textContent = msg;
+    c.appendChild(d);
+    setTimeout(() => { d.style.opacity = "0"; d.style.transition = "opacity 0.3s"; setTimeout(() => d.remove(), 300); }, 3000);
+}
 
-# ==================== 服务器列表 ====================
+function esc(s) {
+    if (!s) return "";
+    const d = document.createElement("div"); d.textContent = s; return d.innerHTML;
+}
 
-@app.route("/api/guilds", methods=["GET", "OPTIONS"])
-async def api_guilds():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT guild_id, COUNT(*) as user_count, MAX(level) as max_level
-            FROM users GROUP BY guild_id ORDER BY user_count DESC
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        release_conn(conn)
-        data = []
-        for row in rows:
-            data.append({
-                "guild_id": row[0],
-                "guild_name": get_guild_name_from_bot(row[0]),
-                "user_count": row[1],
-                "max_level": row[2]
-            })
-        return jsonify({"success": True, "data": data})
-    except Exception as e:
-        logger.error(f"API guilds 错误: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+function animate(id, target) {
+    const el = document.getElementById(id);
+    const cur = parseInt(el.textContent.replace(/,/g, "")) || 0;
+    if (cur === target) { el.textContent = target.toLocaleString(); return; }
+    const dur = 600, start = performance.now();
+    function upd(now) {
+        const p = Math.min((now - start) / dur, 1);
+        el.textContent = Math.round(cur + (target - cur) * (1 - Math.pow(1 - p, 3))).toLocaleString();
+        if (p < 1) requestAnimationFrame(upd);
+    }
+    requestAnimationFrame(upd);
+}
 
-# ==================== 排行榜 ====================
-
-@app.route("/api/leaderboard/<guild_id>", methods=["GET", "OPTIONS"])
-async def api_leaderboard(guild_id):
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT user_id, level, xp, voice_xp FROM users 
-            WHERE guild_id = %s ORDER BY level DESC, xp DESC LIMIT 100
-        """, (str(guild_id),))
-        rows = cur.fetchall()
-        cur.close()
-        release_conn(conn)
-        data = []
-        for i, row in enumerate(rows):
-            user_name = "未知用户"
-            if hasattr(current_app, "bot"):
-                guild = current_app.bot.get_guild(int(guild_id))
-                member = guild.get_member(int(row[0])) if guild else None
-                if member:
-                    user_name = member.display_name
-            data.append({
-                "rank": i + 1,
-                "user_id": row[0],
-                "user_name": user_name,
-                "level": row[1],
-                "xp": row[2],
-                "voice_xp": row[3]
-            })
-        return jsonify({"success": True, "data": data})
-    except Exception as e:
-        logger.error(f"API leaderboard 错误: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# ==================== 服务器预览 ====================
-
-@app.route("/api/guilds/<guild_id>/preview", methods=["GET", "OPTIONS"])
-async def api_guild_preview(guild_id):
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 未连接"}), 503
-    try:
-        guild = current_app.bot.get_guild(int(guild_id))
-        if not guild:
-            return jsonify({"success": False, "error": "未找到该服务器"}), 404
-        online = sum(1 for m in guild.members if m.status != discord.Status.offline)
-        return jsonify({
-            "success": True,
-            "data": {
-                "name": guild.name,
-                "id": str(guild.id),
-                "member_count": guild.member_count,
-                "online_count": online,
-                "text_channels": len(guild.text_channels),
-                "voice_channels": len(guild.voice_channels),
-                "roles_count": len(guild.roles),
-                "created_at": guild.created_at.isoformat(),
-                "icon_url": str(guild.icon.url) if guild.icon else None
-            }
-        })
-    except Exception as e:
-        logger.error(f"获取服务器预览失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# ==================== 获取频道列表 ====================
-
-@app.route("/api/guilds/<guild_id>/channels", methods=["GET", "OPTIONS"])
-async def api_guild_channels(guild_id):
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 未连接"}), 503
-    try:
-        guild = current_app.bot.get_guild(int(guild_id))
-        if not guild:
-            return jsonify({"success": False, "error": "未找到该服务器"}), 404
-        channels = []
-        for ch in guild.text_channels:
-            perms = ch.permissions_for(guild.me)
-            if perms.send_messages and perms.read_messages:
-                channels.append({
-                    "id": str(ch.id),
-                    "name": ch.name,
-                    "category": ch.category.name if ch.category else None,
-                    "topic": ch.topic[:100] if ch.topic else None,
-                    "position": ch.position
-                })
-        channels.sort(key=lambda c: c["position"])
-        return jsonify({"success": True, "data": channels})
-    except Exception as e:
-        logger.error(f"获取频道列表失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# ==================== 获取成员列表 ====================
-
-@app.route("/api/guilds/<guild_id>/members", methods=["GET", "OPTIONS"])
-async def api_guild_members(guild_id):
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 未连接"}), 503
-    try:
-        guild = current_app.bot.get_guild(int(guild_id))
-        if not guild:
-            return jsonify({"success": False, "error": "未找到该服务器"}), 404
-        members = []
-        for m in guild.members:
-            if not m.bot:
-                members.append({
-                    "id": str(m.id),
-                    "username": m.name,
-                    "display_name": m.display_name,
-                    "avatar_url": str(m.display_avatar.url) if m.display_avatar else None
-                })
-        members.sort(key=lambda x: x["display_name"].lower())
-        return jsonify({"success": True, "data": members})
-    except Exception as e:
-        logger.error(f"获取成员列表失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# ==================== 获取频道消息 ====================
-
-@app.route("/api/channels/<channel_id>/messages", methods=["GET", "OPTIONS"])
-async def api_channel_messages(channel_id):
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 未连接"}), 503
-    try:
-        limit = int(request.args.get("limit", 20))
-        limit = min(max(limit, 1), 100)
-        channel = current_app.bot.get_channel(int(channel_id))
-        if not channel:
-            return jsonify({"success": False, "error": "未找到该频道"}), 404
-        perms = channel.permissions_for(channel.guild.me)
-        if not perms.read_messages or not perms.read_message_history:
-            return jsonify({"success": False, "error": "机器人无读取权限"}), 403
-        messages = []
-        async for msg in channel.history(limit=limit):
-            attachments = []
-            for att in msg.attachments:
-                attachments.append({
-                    "filename": att.filename,
-                    "url": att.url,
-                    "size": att.size
-                })
-            messages.append({
-                "id": str(msg.id),
-                "author": msg.author.display_name,
-                "author_id": str(msg.author.id),
-                "avatar_url": str(msg.author.display_avatar.url) if msg.author.display_avatar else None,
-                "color": str(msg.author.color) if msg.author.color.value else None,
-                "content": msg.content if msg.content else "(空消息)",
-                "timestamp": msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                "attachments": attachments if attachments else None
-            })
-        return jsonify({"success": True, "data": messages})
-    except Exception as e:
-        logger.error(f"获取消息失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# ==================== 发送消息 ====================
-
-@app.route("/api/send-message", methods=["POST", "OPTIONS"])
-async def api_send_message():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 未连接"}), 503
-
-    try:
-        # 判断是 JSON 还是 FormData
-        content_type = request.headers.get("Content-Type", "")
-
-        if "application/json" in content_type:
-            # JSON 模式
-            data = await request.get_json()
-            channel_id = data.get("channel_id")
-            content = data.get("content", "")
-            embed_data = data.get("embed")
-        else:
-            # FormData 模式
-            form = await request.form
-            channel_id = form.get("channel_id")
-            content = form.get("content", "")
-            embed_data = {
-                "enabled": form.get("embed_enabled") == "true",
-                "title": form.get("embed_title"),
-                "description": form.get("embed_description"),
-                "color": form.get("embed_color"),
-                "footer": form.get("embed_footer"),
-                "thumbnail_url": form.get("embed_thumbnail")
-            }
-            # 处理文件
-            files = (await request.files).getlist("files")
-
-        if not channel_id:
-            return jsonify({"success": False, "error": "缺少 channel_id"}), 400
-        if not content and (content_type == "application/json" or not files):
-            return jsonify({"success": False, "error": "缺少 content"}), 400
-
-        channel = current_app.bot.get_channel(int(channel_id))
-        if not channel:
-            return jsonify({"success": False, "error": "未找到该频道"}), 404
-
-        perms = channel.permissions_for(channel.guild.me)
-        if not perms.send_messages:
-            return jsonify({"success": False, "error": "机器人无发送消息权限"}), 403
-
-        # 构建 embed
-        embed = None
-        if embed_data and embed_data.get("enabled"):
-            color_str = (embed_data.get("color") or "0x00b4d8").replace("#", "0x")
-            try:
-                color = int(color_str, 16)
-            except ValueError:
-                color = 0x00b4d8
-            embed = discord.Embed(
-                title=embed_data.get("title") or None,
-                description=embed_data.get("description") or None,
-                color=color
-            )
-            if embed_data.get("footer"):
-                embed.set_footer(text=embed_data["footer"])
-            if embed_data.get("thumbnail_url"):
-                try:
-                    embed.set_thumbnail(url=embed_data["thumbnail_url"])
-                except:
-                    pass
-
-        # 发送消息
-        sent = await channel.send(content=content, embed=embed)
-        logger.info(f"面板发送消息: #{channel.name} in {channel.guild.name}")
-        return jsonify({
-            "success": True,
-            "data": {
-                "message_id": str(sent.id),
-                "channel_id": str(channel_id),
-                "channel_name": channel.name,
-                "guild_name": channel.guild.name
-            }
-        })
-    except discord.Forbidden:
-        return jsonify({"success": False, "error": "机器人权限不足"}), 403
-    except Exception as e:
-        logger.error(f"发送消息失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# ==================== 服务器设置 ====================
-
-@app.route("/api/settings/<guild_id>", methods=["GET", "POST", "OPTIONS"])
-async def api_settings(guild_id):
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if request.method == "GET":
-        try:
-            settings = db_get_guild_settings(guild_id)
-            return jsonify({"success": True, "data": settings})
-        except Exception as e:
-            logger.error(f"获取设置失败: {e}")
-            return jsonify({"success": False, "error": str(e)}), 500
-    elif request.method == "POST":
-        try:
-            data = await request.get_json()
-            if not data:
-                return jsonify({"success": False, "error": "请求体为空"}), 400
-            updated = []
-            if "xp_rate" in data:
-                rate = max(0.1, min(float(data["xp_rate"]), 10.0))
-                db_update_guild_setting(guild_id, "xp_rate", rate)
-                updated.append(f"xp_rate={rate}")
-            if "voice_xp_rate" in data:
-                rate = max(0.1, min(float(data["voice_xp_rate"]), 10.0))
-                db_update_guild_setting(guild_id, "voice_xp_rate", rate)
-                updated.append(f"voice_xp_rate={rate}")
-            logger.info(f"设置已更新: guild={guild_id}, {', '.join(updated)}")
-            return jsonify({
-                "success": True,
-                "message": "设置已更新",
-                "updated": updated
-            })
-        except ValueError as e:
-            return jsonify({"success": False, "error": f"数值格式错误: {str(e)}"}), 400
-        except Exception as e:
-            logger.error(f"更新设置失败: {e}")
-            return jsonify({"success": False, "error": str(e)}), 500
-
-# ==================== Bot 控制 ====================
-
-@app.route("/api/stop-bot", methods=["POST", "OPTIONS"])
-async def api_stop_bot():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 未连接"}), 503
-    try:
-        bot = current_app.bot
-        if not bot.is_ready():
-            return jsonify({"success": False, "error": "Bot 已经是离线状态"}), 400
-        await bot.close()
-        logger.warning("⚠️ Bot 已通过面板停止")
-        return jsonify({"success": True, "message": "Bot 已停止"})
-    except Exception as e:
-        logger.error(f"停止 Bot 失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-@app.route("/api/start-bot", methods=["POST", "OPTIONS"])
-async def api_start_bot():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 实例不存在"}), 503
-    try:
-        bot = current_app.bot
-        if bot.is_ready():
-            return jsonify({"success": False, "error": "Bot 已经在线"}), 400
-        async def start_bot_task():
-            try:
-                await bot.start(os.getenv("DISCORD_TOKEN"))
-            except Exception as e:
-                logger.error(f"Bot 启动失败: {e}")
-        asyncio.create_task(start_bot_task())
-        logger.info("🔄 Bot 正在重新连接...")
-        return jsonify({"success": True, "message": "Bot 正在启动，请稍候..."})
-    except Exception as e:
-        logger.error(f"启动 Bot 失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-@app.route("/api/bot-status", methods=["GET", "OPTIONS"])
-async def api_bot_status():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    if not hasattr(current_app, "bot"):
-        return jsonify({"success": False, "error": "Bot 未连接"}), 503
-    bot = current_app.bot
-    return jsonify({
-        "success": True,
-        "data": {
-            "is_ready": bot.is_ready(),
-            "user": str(bot.user) if bot.user else None,
-            "guilds_count": len(bot.guilds),
-            "latency_ms": round(bot.latency * 1000, 1) if bot.is_ready() else None
+// ====================================================================
+// 认证
+// ====================================================================
+const Auth = {
+    async init() {
+        document.getElementById("lockscreen").classList.remove("hidden");
+        document.getElementById("password-input").focus();
+        const r = localStorage.getItem(RKEY), t = localStorage.getItem(SKEY);
+        if (r === "true" && t) {
+            document.getElementById("password-input").disabled = true;
+            document.getElementById("password-input").placeholder = "自动登录中...";
+            document.getElementById("lock-btn").disabled = true;
+            document.getElementById("lock-btn").textContent = "⏳ 验证中...";
+            const ok = await this.verify(t);
+            if (ok) { document.getElementById("lockscreen").classList.add("hidden"); App.init(); return; }
+            localStorage.removeItem(SKEY);
+            document.getElementById("password-input").disabled = false;
+            document.getElementById("password-input").placeholder = "••••••";
+            document.getElementById("password-input").value = "";
+            document.getElementById("lock-btn").disabled = false;
+            document.getElementById("lock-btn").textContent = "🔓 解锁";
+            document.getElementById("lock-error").textContent = "登录已过期，请重新输入密码";
+            document.getElementById("password-input").focus();
         }
-    })
+    },
+    async verify(t) {
+        try { return (await (await api(API+"/api/verify-token",{headers:{Authorization:"Bearer "+t}})).json()).success===true; }
+        catch(e){return false;}
+    },
+    async unlock() {
+        const pw = document.getElementById("password-input").value.trim();
+        const err = document.getElementById("lock-error");
+        const btn = document.getElementById("lock-btn");
+        const rem = document.getElementById("remember-checkbox").checked;
+        if (!pw) { err.textContent = "请输入密码"; return; }
+        btn.disabled = true; btn.textContent = "验证中..."; err.textContent = "";
+        try {
+            const r = await fetch(API+"/api/auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pw})});
+            const d = await r.json();
+            if (d.success) {
+                document.getElementById("lockscreen").classList.add("hidden");
+                localStorage.setItem(SKEY, d.token);
+                if (rem) localStorage.setItem(RKEY, "true"); else localStorage.removeItem(RKEY);
+                App.init();
+            } else {
+                err.textContent = d.error || "密码错误";
+                document.getElementById("password-input").value = "";
+                document.getElementById("password-input").focus();
+            }
+        } catch (e) { err.textContent = "连接失败"; }
+        finally { btn.disabled = false; btn.textContent = "🔓 解锁"; }
+    },
+    lock() {
+        localStorage.removeItem(SKEY); localStorage.removeItem(RKEY);
+        activeGuild = null;
+        document.getElementById("lockscreen").classList.remove("hidden");
+        document.getElementById("password-input").value = "";
+        document.getElementById("password-input").disabled = false;
+        document.getElementById("password-input").placeholder = "••••••";
+        document.getElementById("lock-error").textContent = "";
+        document.getElementById("lock-btn").disabled = false;
+        document.getElementById("lock-btn").textContent = "🔓 解锁";
+        document.getElementById("password-input").focus();
+    }
+};
 
-# ==================== 健康检查 ====================
+// ====================================================================
+// Bot 控制
+// ====================================================================
+const BotControl = {
+    updateUI() {
+        const btn = document.getElementById("btn-toggle-bot");
+        const db = document.getElementById("danger-btn");
+        const dt = document.getElementById("danger-title");
+        const dd = document.getElementById("danger-desc");
+        if (botOnline) {
+            btn.textContent = "⏹ 停止"; btn.className = "btn-icon danger";
+            if (db) { db.textContent = "停止 Bot"; db.className = "btn btn-danger btn-sm"; }
+            if (dt) dt.textContent = "⏹ 停止 Bot";
+            if (dd) dd.textContent = "这将断开 Bot 与 Discord 的连接。";
+        } else {
+            btn.textContent = "▶ 启动"; btn.className = "btn-icon success";
+            if (db) { db.textContent = "启动 Bot"; db.className = "btn btn-success btn-sm"; }
+            if (dt) dt.textContent = "▶ 启动 Bot";
+            if (dd) dd.textContent = "Bot 当前离线，点击启动重新连接 Discord。";
+        }
+        const dot = document.getElementById("dot"), st = document.getElementById("status-text"),
+              bs = document.getElementById("bot-status");
+        if (botOnline) {
+            dot.className = "status-dot online"; st.textContent = "已连接";
+            bs.textContent = "在线"; bs.style.color = "var(--success)";
+        } else {
+            dot.className = "status-dot error"; st.textContent = "已停止";
+            bs.textContent = "离线"; bs.style.color = "var(--danger)";
+        }
+    },
+    async check() {
+        try { const d = await (await api(API+"/api/bot-status")).json(); if (d.success) { botOnline = d.data.is_ready; this.updateUI(); } } catch(e) {}
+    },
+    async toggle() {
+        if (botOnline) {
+            if (!confirm("确定要停止 Bot 吗？")) return;
+            try { const d = await (await api(API+"/api/stop-bot",{method:"POST"})).json(); if (d.success) { botOnline=false; this.updateUI(); toast("✅ Bot 已停止","success"); } else toast("❌ "+(d.error||"失败"),"error"); } catch(e) { toast("请求失败","error"); }
+        } else {
+            try {
+                const d = await (await api(API+"/api/start-bot",{method:"POST"})).json();
+                if (d.success) {
+                    toast("🔄 Bot 正在启动...","info"); let cnt=0;
+                    const iv=setInterval(async()=>{cnt++;try{const s=await(await api(API+"/api/bot-status")).json();if(s.success&&s.data.is_ready){clearInterval(iv);botOnline=true;this.updateUI();toast("✅ Bot 已重新上线","success");App.loadAll();}else if(cnt>=25){clearInterval(iv);toast("⚠️ 启动超时","error");}}catch(e){}},2000);
+                } else toast("❌ "+(d.error||"失败"),"error");
+            } catch(e) { toast("请求失败","error"); }
+        }
+    }
+};
 
-@app.route("/api/health", methods=["GET", "OPTIONS"])
-async def api_health():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    bot_connected = False
-    if hasattr(current_app, "bot") and current_app.bot:
-        bot_connected = current_app.bot.is_ready()
-    return jsonify({
-        "success": True,
-        "status": "running",
-        "bot_connected": bot_connected,
-        "active_tokens": len(_valid_tokens)
-    })
+// ====================================================================
+// UI
+// ====================================================================
+const UI = {
+    switchTab(name) {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+        document.querySelector(`.tab[onclick="UI.switchTab('${name}')"]`).classList.add("active");
+        document.getElementById("tab-" + name).classList.add("active");
+        if (!activeGuild) return;
+        if (name === "dashboard") Dashboard.load();
+        if (name === "messenger") Messenger.onGuildReady();
+        if (name === "settings") { Settings.load(); Moderation.load(); }
+    }
+};
+
+// ====================================================================
+// 全局选服务器
+// ====================================================================
+function showGuildPicker() {
+    if (!guildList.length) return;
+    const list = document.getElementById("guild-picker-list");
+    list.innerHTML = guildList.map(g => `
+        <div onclick="selectGlobalGuild('${g.guild_id}')" style="padding:12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.15s;"
+             onmouseover="this.style.background='var(--cyan-glow)'" onmouseout="this.style.background=''">
+            <div style="font-weight:600;">${esc(g.guild_name||'未知')}</div>
+            <div style="font-size:11px;color:var(--text-muted);">${g.guild_id} · ${g.user_count} 用户</div>
+        </div>
+    `).join("");
+    document.getElementById("guild-picker").style.display = "flex";
+}
+
+function selectGlobalGuild(gid) {
+    activeGuild = guildList.find(g => g.guild_id === gid);
+    document.getElementById("guild-picker").style.display = "none";
+    document.getElementById("global-guild-select").value = gid;
+    refreshAllPanels();
+    toast("✅ " + (activeGuild?.guild_name || gid), "success");
+}
+
+function onGlobalGuildChange() {
+    const gid = document.getElementById("global-guild-select").value;
+    if (!gid) return;
+    activeGuild = guildList.find(g => g.guild_id === gid);
+    refreshAllPanels();
+}
+
+function refreshAllPanels() {
+    if (!activeGuild) return;
+    Dashboard.load();
+    Messenger.onGuildReady();
+    Settings.load();
+    Moderation.load();
+}
+
+function fillGlobalSelect() {
+    const sel = document.getElementById("global-guild-select");
+    sel.innerHTML = '<option value="">选择服务器</option>';
+    guildList.forEach(g => {
+        const o = document.createElement("option");
+        o.value = g.guild_id;
+        o.textContent = (g.guild_name || "未知") + " (" + g.guild_id + ")";
+        sel.appendChild(o);
+    });
+}
+
+// ====================================================================
+// 应用初始化
+// ====================================================================
+const App = {
+    async init() {
+        await BotControl.check();
+        try { const d = await (await api(API+"/api/health")).json(); botOnline = d.success && d.bot_connected; } catch(e) { botOnline=false; }
+        BotControl.updateUI();
+        await this.loadAll();
+        if (guildList.length > 0) showGuildPicker();
+    },
+    async loadAll() { await Promise.all([this.loadStats(), this.loadGuilds()]); },
+    async loadStats() {
+        try { const d = await (await api(API+"/api/stats")).json(); if (d.success) { animate("total-users",d.data.total_users); animate("total-guilds",d.data.total_guilds); animate("max-level",d.data.max_level); } } catch(e) {}
+    },
+    async loadGuilds() {
+        const panel = document.getElementById("guilds-panel"); panel.innerHTML = '<div class="spinner"></div>';
+        try {
+            const d = await (await api(API+"/api/guilds")).json();
+            if (d.success && d.data.length) {
+                guildList = d.data;
+                document.getElementById("guild-count").textContent = d.data.length;
+                panel.innerHTML = `<table><thead><tr><th>服务器</th><th>用户</th><th>最高等级</th></tr></thead><tbody>
+                    ${d.data.map(g => `<tr><td><div class="guild-name">${esc(g.guild_name||'未知')}</div><div class="guild-id">${g.guild_id}</div></td><td>${g.user_count.toLocaleString()}</td><td><span class="level-tag">Lv ${g.max_level}</span></td></tr>`).join("")}</tbody></table>`;
+                fillGlobalSelect();
+            } else panel.innerHTML = '<div class="empty-state"><div class="icon">📭</div>暂无数据</div>';
+        } catch(e) { panel.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div>加载失败</div>'; }
+    }
+};
+
+// ====================================================================
+// 仪表盘
+// ====================================================================
+const Dashboard = {
+    async load() {
+        if (!activeGuild) return;
+        const gid = activeGuild.guild_id;
+        const lb = document.getElementById("lb-content"); lb.innerHTML = '<div class="spinner"></div>';
+        try {
+            const d = await (await api(API+"/api/leaderboard/"+gid)).json();
+            if (d.success && d.data.length) {
+                const icons = {1:"🥇",2:"🥈",3:"🥉"};
+                lb.innerHTML = `<table><thead><tr><th>#</th><th>用户</th><th>等级</th><th>XP</th><th>语音XP</th></tr></thead><tbody>
+                    ${d.data.map(r => `<tr><td><span class="rank-badge ${r.rank<=3?'rank-'+r.rank:'rank-other'}">${icons[r.rank]||r.rank}</span></td><td><span class="guild-name">${esc(r.user_name||'未知')}</span><div class="guild-id">${r.user_id}</div></td><td><span class="level-tag">Lv ${r.level}</span></td><td>${r.xp.toLocaleString()}</td><td style="color:var(--text-muted)">${r.voice_xp.toLocaleString()}</td></tr>`).join("")}</tbody></table>`;
+            } else lb.innerHTML = '<div class="empty-state"><div class="icon">🔍</div>暂无数据</div>';
+        } catch(e) { lb.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div>加载失败</div>'; }
+    }
+};
+
+// ====================================================================
+// 消息发送
+// ====================================================================
+const Messenger = {
+    mentionIndex: -1,
+    files: [],
+
+    async onGuildReady() {
+        if (!activeGuild) return;
+        const gid = activeGuild.guild_id;
+        const cs = document.getElementById("msg-channel-select");
+        const pv = document.getElementById("guild-preview");
+        cs.innerHTML = '<option value="">加载中...</option>';
+
+        try {
+            const d = await (await api(API+"/api/guilds/"+gid+"/preview")).json();
+            if (d.success) {
+                const g = d.data;
+                pv.style.display = "grid";
+                pv.innerHTML = `<div class="guild-preview-item"><div class="val">${g.member_count}</div><div class="lbl">成员</div></div><div class="guild-preview-item"><div class="val">${g.online_count}</div><div class="lbl">在线</div></div><div class="guild-preview-item"><div class="val">${g.text_channels}</div><div class="lbl">文字频道</div></div><div class="guild-preview-item"><div class="val">${g.voice_channels}</div><div class="lbl">语音频道</div></div>`;
+            }
+        } catch(e) {}
+
+        try {
+            const d = await (await api(API+"/api/guilds/"+gid+"/channels")).json();
+            if (d.success) {
+                cs.innerHTML = '<option value="">选择频道</option>';
+                d.data.forEach(ch => { const o = document.createElement("option"); o.value = ch.id; o.textContent = (ch.category?"["+ch.category+"] ":"")+"#"+ch.name; cs.appendChild(o); });
+            } else cs.innerHTML = '<option value="">获取失败</option>';
+        } catch(e) { cs.innerHTML = '<option value="">获取失败</option>'; }
+    },
+
+    onInput() {
+        const ta = document.getElementById("message-content"), val = ta.value, cp = ta.selectionStart;
+        const before = val.substring(0, cp), match = before.match(/@(\S*)$/);
+        const sug = document.getElementById("mention-suggestions");
+        if (!match) { sug.classList.remove("show"); this.mentionIndex = -1; this.updateCharCount(); return; }
+        const q = match[1].toLowerCase();
+        let items = [];
+        if (q === "" || "everyone".startsWith(q)) items.push({id:"@everyone", name:"@everyone"});
+        if (q === "" || "here".startsWith(q)) items.push({id:"@here", name:"@here"});
+        if (items.length > 0) {
+            this.mentionIndex = -1;
+            sug.innerHTML = items.map((it,i) => `<div class="mention-item" data-idx="${i}" data-id="${it.id}" onmousedown="Messenger.insertMention(this)">${esc(it.name)}</div>`).join("");
+            sug.classList.add("show");
+        } else sug.classList.remove("show");
+        this.updateCharCount();
+    },
+
+    onKeydown(e) {
+        const sug = document.getElementById("mention-suggestions");
+        if (!sug.classList.contains("show")) return;
+        const items = sug.querySelectorAll(".mention-item");
+        if (e.key==="ArrowDown"){e.preventDefault();this.mentionIndex=Math.min(this.mentionIndex+1,items.length-1);this._hl(items);}
+        else if(e.key==="ArrowUp"){e.preventDefault();this.mentionIndex=Math.max(this.mentionIndex-1,0);this._hl(items);}
+        else if(e.key==="Enter"&&this.mentionIndex>=0){e.preventDefault();this.insertMention(items[this.mentionIndex]);}
+        else if(e.key==="Escape"){sug.classList.remove("show");this.mentionIndex=-1;}
+    },
+
+    _hl(items){items.forEach((it,i)=>it.style.background=i===this.mentionIndex?"var(--cyan-glow)":"");},
+
+    insertMention(el){
+        const ta=document.getElementById("message-content"),val=ta.value,cp=ta.selectionStart,before=val.substring(0,cp),after=val.substring(cp);
+        ta.value=before.replace(/@\S*$/,"")+el.dataset.id+" "+after;
+        document.getElementById("mention-suggestions").classList.remove("show");this.mentionIndex=-1;ta.focus();this.updateCharCount();
+    },
+
+    updateCharCount(){const l=document.getElementById("message-content").value.length,el=document.getElementById("char-count");el.textContent=l+" / 2000";el.className="char-count"+(l>1800?" warn":"")+(l>1950?" danger":"");},
+    toggleEmbed(){document.getElementById("embed-options").style.display=document.getElementById("embed-enabled").checked?"grid":"none";},
+
+    handleFiles(fl){for(const f of fl){if(f.size>8*1024*1024){toast(f.name+" 超过8MB","error");continue;}this.files.push(f);}this._rf();},
+    _rf(){document.getElementById("file-list").innerHTML=this.files.map((f,i)=>`<div class="file-tag">📄 ${esc(f.name)} (${(f.size/1024).toFixed(1)}KB) <span class="remove" onclick="Messenger.removeFile(${i})">×</span></div>`).join("");},
+    removeFile(i){this.files.splice(i,1);this._rf();},
+
+    preview(){
+        const c=document.getElementById("message-content").value;document.getElementById("message-preview").classList.add("show");
+        document.getElementById("preview-content").textContent=c||"(空消息)";
+        const pe=document.getElementById("preview-embed");
+        if(document.getElementById("embed-enabled").checked){
+            pe.style.display="block";pe.style.borderLeftColor=document.getElementById("embed-color").value||"#00b4d8";
+            document.getElementById("preview-embed-title").textContent=document.getElementById("embed-title").value||"(无标题)";
+            document.getElementById("preview-embed-desc").textContent=document.getElementById("embed-description").value||"(无描述)";
+            document.getElementById("preview-embed-footer").textContent=document.getElementById("embed-footer").value||"";
+        }else pe.style.display="none";
+    },
+
+    async send(){
+        const cid = document.getElementById("msg-channel-select").value;
+        const content = document.getElementById("message-content").value.trim();
+        if (!cid) { toast("请选择频道", "error"); return; }
+        if (!content && !this.files.length) { toast("请输入内容或上传文件", "error"); return; }
+        const btn = document.getElementById("send-btn"); btn.disabled = true; btn.textContent = "发送中...";
+        try {
+            const token = localStorage.getItem(SKEY);
+            const body = JSON.stringify({
+                channel_id: cid,
+                content: content,
+                embed: document.getElementById("embed-enabled").checked ? {
+                    enabled: true,
+                    title: document.getElementById("embed-title").value,
+                    description: document.getElementById("embed-description").value,
+                    color: document.getElementById("embed-color").value,
+                    footer: document.getElementById("embed-footer").value,
+                    thumbnail_url: document.getElementById("embed-thumbnail").value
+                } : { enabled: false }
+            });
+            const resp = await fetch(API+"/api/send-message", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer " + token
+                },
+                body: body
+            });
+            const d = await resp.json();
+            if (d.success) {
+                toast("✅ 已发送到 #" + d.data.channel_name, "success");
+                document.getElementById("message-content").value = "";
+                this.updateCharCount();
+                this.files = []; this._rf();
+                document.getElementById("message-preview").classList.remove("show");
+            } else toast("❌ " + (d.error || "失败"), "error");
+        } catch(e) { toast("发送失败", "error"); }
+        finally { btn.disabled = false; btn.textContent = "📨 发送"; }
+    }
+};
+
+// ====================================================================
+// 设置
+// ====================================================================
+const Settings = {
+    async load() {
+        if (!activeGuild) return;
+        const gid = activeGuild.guild_id, gn = activeGuild.guild_name;
+        try {
+            const d = await (await api(API+"/api/settings/"+gid)).json();
+            if (d.success) {
+                document.getElementById("settings-panel").innerHTML = `
+                    <div style="margin-bottom:14px;font-size:12px;color:var(--text-secondary);">编辑: <strong style="color:var(--text);">${esc(gn)}</strong></div>
+                    <div class="settings-row"><div><div class="settings-label">经验倍率</div><div class="settings-desc">消息 XP 倍率 (0.1-10.0)</div></div><div style="display:flex;align-items:center;gap:6px;"><input type="number" class="settings-input" id="setting-xp-rate" value="${d.data.xp_rate||1.0}" min="0.1" max="10.0" step="0.1"><span style="font-size:11px;color:var(--text-muted);">×</span></div></div>
+                    <div class="settings-row"><div><div class="settings-label">语音经验倍率</div><div class="settings-desc">语音 XP 倍率 (0.1-10.0)</div></div><div style="display:flex;align-items:center;gap:6px;"><input type="number" class="settings-input" id="setting-voice-xp-rate" value="${d.data.voice_xp_rate||1.0}" min="0.1" max="10.0" step="0.1"><span style="font-size:11px;color:var(--text-muted);">×</span></div></div>
+                    <button class="btn" onclick="Settings.save()" style="margin-top:14px;width:100%;">💾 保存</button>`;
+            }
+        } catch(e) {}
+    },
+    async save() {
+        if (!activeGuild) return;
+        const gid = activeGuild.guild_id;
+        const xr = document.getElementById("setting-xp-rate")?.value;
+        const vr = document.getElementById("setting-voice-xp-rate")?.value;
+        try {
+            const d = await (await api(API+"/api/settings/"+gid,{method:"POST",body:JSON.stringify({xp_rate:parseFloat(xr),voice_xp_rate:parseFloat(vr)})})).json();
+            toast(d.success?"✅ 已保存":"❌ "+d.error,d.success?"success":"error");
+        } catch(e) { toast("保存失败","error"); }
+    }
+};
+
+// ====================================================================
+// 成员管理
+// ====================================================================
+const Moderation = {
+    async load() {
+        if (!activeGuild) return;
+        const gid = activeGuild.guild_id;
+        try {
+            const d = await (await api(API+"/api/guilds/"+gid+"/members")).json();
+            if (d.success) {
+                const list = d.data.members || d.data || [];
+                const members = Array.isArray(list) ? list : [];
+                document.getElementById("mod-panel").innerHTML = `
+                    <div class="toolbar"><input type="text" id="mod-search" placeholder="搜索成员..." oninput="Moderation.filter()"></div>
+                    <div style="max-height:350px;overflow-y:auto;">
+                        <table><thead><tr><th>用户</th><th>ID</th><th>加入时间</th><th>操作</th></tr></thead>
+                        <tbody id="mod-members-tbody">${members.map(m => `<tr data-name="${esc(m.display_name).toLowerCase()}" data-username="${esc(m.username||'').toLowerCase()}">
+                            <td><div style="display:flex;align-items:center;gap:8px;"><img src="${m.avatar_url||''}" style="width:24px;height:24px;border-radius:50%;" onerror="this.style.display='none'"><span>${esc(m.display_name)}</span></div></td>
+                            <td><span class="guild-id">${m.id}</span></td>
+                            <td style="font-size:11px;color:var(--text-muted);">${m.joined_at?new Date(m.joined_at).toLocaleDateString():'-'}</td>
+                            <td><button class="btn btn-danger btn-sm" onclick="Moderation.kick('${m.id}','${esc(m.display_name)}')">踢出</button> <button class="btn btn-danger btn-sm" onclick="Moderation.ban('${m.id}','${esc(m.display_name)}')">封禁</button></td>
+                        </tr>`).join("")}</tbody></table>
+                    </div>`;
+            }
+        } catch(e) {}
+    },
+    filter() {
+        const q = (document.getElementById("mod-search")?.value||"").toLowerCase();
+        document.querySelectorAll("#mod-members-tbody tr").forEach(tr => {
+            const n = tr.dataset.name||"", u = tr.dataset.username||"";
+            tr.style.display = n.includes(q)||u.includes(q) ? "" : "none";
+        });
+    },
+    async kick(uid, name) {
+        if (!confirm("确定要踢出 "+name+" 吗？")) return;
+        if (!activeGuild) return;
+        try {
+            const d = await (await api(API+"/api/guilds/"+activeGuild.guild_id+"/kick",{method:"POST",body:JSON.stringify({user_id:uid,reason:"面板操作"})})).json();
+            toast(d.success?"✅ 已踢出":"❌ "+(d.error||"失败"),d.success?"success":"error");
+            if (d.success) this.load();
+        } catch(e) { toast("请求失败","error"); }
+    },
+    async ban(uid, name) {
+        if (!confirm("确定要封禁 "+name+" 吗？")) return;
+        if (!activeGuild) return;
+        try {
+            const d = await (await api(API+"/api/guilds/"+activeGuild.guild_id+"/ban",{method:"POST",body:JSON.stringify({user_id:uid,reason:"面板操作",delete_days:1})})).json();
+            toast(d.success?"✅ 已封禁":"❌ "+(d.error||"失败"),d.success?"success":"error");
+            if (d.success) this.load();
+        } catch(e) { toast("请求失败","error"); }
+    }
+};
+
+// 拖拽上传
+(function(){
+    const a = document.getElementById("file-upload-area");
+    a.addEventListener("dragover", e => { e.preventDefault(); a.classList.add("dragover"); });
+    a.addEventListener("dragleave", () => a.classList.remove("dragover"));
+    a.addEventListener("drop", e => { e.preventDefault(); a.classList.remove("dragover"); Messenger.handleFiles(e.dataTransfer.files); });
+})();
+
+Auth.init();
+</script>
+</body>
+</html>
