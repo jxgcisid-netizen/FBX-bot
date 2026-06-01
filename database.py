@@ -35,7 +35,6 @@ def get_pool():
             query = urllib.parse.parse_qs(url.query)
             sslmode = query.get('sslmode', ['disable'])[0]
             
-            # 重建不含 sslmode 的 DSN
             base_url = f"{url.scheme}://{url.username}:{url.password}@{url.hostname}:{url.port}{url.path}"
             
             _pool = psycopg2.pool.ThreadedConnectionPool(
@@ -49,7 +48,6 @@ def get_pool():
 
 
 def get_conn():
-    """获取数据库连接"""
     pool = get_pool()
     conn = pool.getconn()
     conn.set_isolation_level(0)
@@ -57,7 +55,6 @@ def get_conn():
 
 
 def release_conn(conn):
-    """归还连接"""
     pool = get_pool()
     pool.putconn(conn)
 
@@ -96,10 +93,19 @@ def init_db():
             voice_log_channel TEXT, mod_log_channel TEXT)'''
     ]
 
+    # 迁移：补加缺失的列
+    migrations = [
+        "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS levelup_channel_id TEXT",
+        "ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS welcome_message TEXT",
+        "ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS welcome_channel_id TEXT",
+    ]
+
     conn = get_conn()
     try:
         cur = conn.cursor()
         for sql in tables:
+            cur.execute(sql)
+        for sql in migrations:
             cur.execute(sql)
         conn.commit()
         cur.close()
@@ -184,7 +190,10 @@ def db_get_guild_settings(guild_id):
         if row:
             cols = [desc[0] for desc in cur.description]
             data = dict(zip(cols, row))
-            return {"xp_rate": data["xp_rate"], "voice_xp_rate": data["voice_xp_rate"]}
+            return {
+                "xp_rate": data.get("xp_rate", 1.0),
+                "voice_xp_rate": data.get("voice_xp_rate", 1.0)
+            }
         return {"xp_rate": 1.0, "voice_xp_rate": 1.0}
     finally:
         release_conn(conn)
