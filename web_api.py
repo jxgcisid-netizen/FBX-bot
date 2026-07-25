@@ -1,22 +1,15 @@
 import os
 import asyncio
-import hashlib
 import secrets
 import time
 import discord
 from quart import Quart, jsonify, request, current_app
-from quart_cors import cors
 from database import get_conn, release_conn, db_get_guild_settings, db_update_guild_setting, clean_panel_tokens
 import logging
 
 logger = logging.getLogger("WebAPI")
 
 app = Quart(__name__)
-app = cors(app, 
-    allow_origin="*",
-    allow_headers=["Content-Type", "Authorization"],
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-)
 
 # ==================== 密码验证系统（数据库版） ====================
 
@@ -55,7 +48,7 @@ def is_token_valid(token):
             conn.commit()
             cur.close()
             return False
-        # 刷新过期时间
+        # 每次使用刷新过期时间
         new_exp = time.time() + TOKEN_EXPIRE_SECONDS
         cur = conn.cursor()
         cur.execute("UPDATE panel_tokens SET expires_at = %s WHERE token = %s", (new_exp, token))
@@ -68,19 +61,38 @@ def is_token_valid(token):
 def clean_expired_tokens():
     clean_panel_tokens()
 
+# ==================== CORS 支持 Cookie ====================
+@app.after_request
+async def add_cors_headers(response):
+    origin = request.headers.get('Origin')
+    if origin:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Vary'] = 'Origin'
+    return response
+
 # ==================== 全局认证中间件 ====================
 
 @app.before_request
 async def check_auth():
-    public_paths = ["/api/auth", "/api/health", "/api/verify-token"]
+    public_paths = ["/api/auth", "/api/health", "/api/verify-token", "/api/logout"]
     if request.path in public_paths:
         return
     if request.method == "OPTIONS":
         return
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
+
+    token = request.cookies.get('auth_token')
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
         return jsonify({"success": False, "error": "未授权，请先登录"}), 401
-    token = auth_header[7:]
+
     clean_expired_tokens()
     if not is_token_valid(token):
         return jsonify({"success": False, "error": "token 无效或已过期"}), 401
@@ -109,7 +121,17 @@ async def api_auth():
             save_token(token, time.time() + TOKEN_EXPIRE_SECONDS)
             clean_expired_tokens()
             logger.info("面板登录成功")
-            return jsonify({"success": True, "token": token})
+
+            resp = jsonify({"success": True, "token": token})
+            resp.set_cookie(
+                'auth_token', token,
+                httponly=True,
+                secure=True,
+                samesite='None',
+                max_age=TOKEN_EXPIRE_SECONDS,
+                path='/'
+            )
+            return resp
         else:
             logger.warning("面板登录失败：密码错误")
             return jsonify({"success": False, "error": "密码错误"}), 401
@@ -121,18 +143,32 @@ async def api_auth():
 async def api_verify_token():
     if request.method == "OPTIONS":
         return jsonify({}), 200
-    try:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return jsonify({"success": False, "error": "无效的 token"}), 401
-        token = auth_header[7:]
-        clean_expired_tokens()
-        if is_token_valid(token):
-            return jsonify({"success": True})
-        else:
-            return jsonify({"success": False, "error": "token 已过期"}), 401
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    token = request.cookies.get('auth_token')
+    if not token:
+        return jsonify({"success": False, "error": "未登录"}), 401
+    clean_expired_tokens()
+    if is_token_valid(token):
+        return jsonify({"success": True})
+    else:
+        return jsonify({"success": False, "error": "token 已过期"}), 401
+
+@app.route("/api/logout", methods=["POST", "OPTIONS"])
+async def api_logout():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+    token = request.cookies.get('auth_token')
+    if token:
+        conn = get_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM panel_tokens WHERE token = %s", (token,))
+            conn.commit()
+            cur.close()
+        finally:
+            release_conn(conn)
+    resp = jsonify({"success": True})
+    resp.delete_cookie('auth_token', path='/')
+    return resp
 
 # ==================== 仪表盘 ====================
 
