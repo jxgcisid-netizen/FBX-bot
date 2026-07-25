@@ -6,7 +6,7 @@ import time
 import discord
 from quart import Quart, jsonify, request, current_app
 from quart_cors import cors
-from database import get_conn, release_conn, db_get_guild_settings, db_update_guild_setting
+from database import get_conn, release_conn, db_get_guild_settings, db_update_guild_setting, clean_panel_tokens
 import logging
 
 logger = logging.getLogger("WebAPI")
@@ -18,19 +18,55 @@ app = cors(app,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 )
 
-# ==================== 密码验证系统 ====================
+# ==================== 密码验证系统（数据库版） ====================
 
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
-_valid_tokens = {}
+TOKEN_EXPIRE_SECONDS = 365 * 86400  # 一年
 
 def generate_token():
     return secrets.token_hex(32)
 
+def save_token(token, expires_at):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO panel_tokens (token, expires_at) VALUES (%s, %s) "
+            "ON CONFLICT (token) DO UPDATE SET expires_at = EXCLUDED.expires_at",
+            (token, expires_at)
+        )
+        conn.commit()
+        cur.close()
+    finally:
+        release_conn(conn)
+
+def is_token_valid(token):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT expires_at FROM panel_tokens WHERE token = %s", (token,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return False
+        if row[0] < time.time():
+            cur = conn.cursor()
+            cur.execute("DELETE FROM panel_tokens WHERE token = %s", (token,))
+            conn.commit()
+            cur.close()
+            return False
+        # 刷新过期时间
+        new_exp = time.time() + TOKEN_EXPIRE_SECONDS
+        cur = conn.cursor()
+        cur.execute("UPDATE panel_tokens SET expires_at = %s WHERE token = %s", (new_exp, token))
+        conn.commit()
+        cur.close()
+        return True
+    finally:
+        release_conn(conn)
+
 def clean_expired_tokens():
-    now = time.time()
-    expired = [t for t, exp in _valid_tokens.items() if exp < now]
-    for t in expired:
-        del _valid_tokens[t]
+    clean_panel_tokens()
 
 # ==================== 全局认证中间件 ====================
 
@@ -46,9 +82,8 @@ async def check_auth():
         return jsonify({"success": False, "error": "未授权，请先登录"}), 401
     token = auth_header[7:]
     clean_expired_tokens()
-    if token not in _valid_tokens:
+    if not is_token_valid(token):
         return jsonify({"success": False, "error": "token 无效或已过期"}), 401
-    _valid_tokens[token] = time.time() + 86400
 
 # ==================== 辅助函数 ====================
 
@@ -71,7 +106,7 @@ async def api_auth():
             return jsonify({"success": False, "error": "缺少密码"}), 400
         if data["password"] == PANEL_PASSWORD:
             token = generate_token()
-            _valid_tokens[token] = time.time() + 86400
+            save_token(token, time.time() + TOKEN_EXPIRE_SECONDS)
             clean_expired_tokens()
             logger.info("面板登录成功")
             return jsonify({"success": True, "token": token})
@@ -92,8 +127,7 @@ async def api_verify_token():
             return jsonify({"success": False, "error": "无效的 token"}), 401
         token = auth_header[7:]
         clean_expired_tokens()
-        if token in _valid_tokens:
-            _valid_tokens[token] = time.time() + 86400
+        if is_token_valid(token):
             return jsonify({"success": True})
         else:
             return jsonify({"success": False, "error": "token 已过期"}), 401
@@ -459,6 +493,5 @@ async def api_health():
     return jsonify({
         "success": True,
         "status": "running",
-        "bot_connected": bot_connected,
-        "active_tokens": len(_valid_tokens)
+        "bot_connected": bot_connected
     })
