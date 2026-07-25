@@ -90,10 +90,13 @@ def init_db():
             guild_id TEXT PRIMARY KEY, xp_rate REAL DEFAULT 1.0, voice_xp_rate REAL DEFAULT 1.0)''',
         '''CREATE TABLE IF NOT EXISTS log_settings (
             guild_id TEXT PRIMARY KEY, message_log_channel TEXT,
-            voice_log_channel TEXT, mod_log_channel TEXT)'''
+            voice_log_channel TEXT, mod_log_channel TEXT)''',
+        '''CREATE TABLE IF NOT EXISTS panel_tokens (
+            token TEXT PRIMARY KEY,
+            expires_at DOUBLE PRECISION NOT NULL
+        )'''
     ]
 
-    # 迁移：补加缺失的列
     migrations = [
         "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS levelup_channel_id TEXT",
         "ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS welcome_message TEXT",
@@ -110,6 +113,17 @@ def init_db():
         conn.commit()
         cur.close()
         logger.info("PostgreSQL 表初始化完成")
+    finally:
+        release_conn(conn)
+
+
+def clean_panel_tokens():
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM panel_tokens WHERE expires_at < %s", (datetime.now().timestamp(),))
+        conn.commit()
+        cur.close()
     finally:
         release_conn(conn)
 
